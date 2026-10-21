@@ -43,6 +43,10 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     val sleepMin = MutableStateFlow(0)
     val preset = MutableStateFlow(store.preset)
     val bass = MutableStateFlow(store.bass)
+    val counts = MutableStateFlow(store.counts())
+    val theme = MutableStateFlow(store.theme)
+    val accentIdx = MutableStateFlow(store.accentIdx)
+    val speed = MutableStateFlow(store.speed)
 
     private var byId: Map<Long, Song> = emptyMap()
     private val itemCache = HashMap<Long, MediaItem>()
@@ -54,19 +58,21 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
     private val listener = object : Player.Listener {
         override fun onEvents(player: Player, events: Player.Events) {
-            if (events.contains(Player.EVENT_TIMELINE_CHANGED)) syncQueue(player)
+            if (events.contains(Player.EVENT_TIMELINE_CHANGED) || events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION) ||
+                player.mediaItemCount != queue.value.size) syncQueue(player)
             sync(player)
         }
     }
 
     init {
+        Accent = AccentChoices[store.accentIdx.coerceIn(0, AccentChoices.lastIndex)]
         val token = SessionToken(app, ComponentName(app, PlaybackService::class.java))
         val f = MediaController.Builder(app, token).buildAsync()
         f.addListener({
             val c = f.get()
             controller = c
             c.addListener(listener)
-            syncQueue(c); sync(c); sendFx()
+            syncQueue(c); sync(c); sendFx(); c.setPlaybackSpeed(speed.value)
         }, MoreExecutors.directExecutor())
     }
 
@@ -80,6 +86,8 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             lastId = id
             recents.value = (listOf(id) + recents.value.filter { it != id }).take(30)
             store.saveRecents(recents.value)
+            counts.value = counts.value + (id to ((counts.value[id] ?: 0) + 1))
+            store.saveCounts(counts.value)
         }
         _ui.value = PlayerUi(
             id, p.isPlaying, p.shuffleModeEnabled, p.repeatMode,
@@ -174,6 +182,10 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             Bundle().apply { putInt("preset", preset.value); putInt("bass", bass.value) }
         )
     }
+
+    fun setTheme(t: Int) { theme.value = t; store.theme = t }
+    fun setAccent(i: Int) { accentIdx.value = i; store.accentIdx = i; Accent = AccentChoices[i] }
+    fun setSpeed(s: Float) { speed.value = s; store.speed = s; controller?.setPlaybackSpeed(s) }
 
     // Lyrics
     fun lyrics(id: Long): String? = store.lyrics(id)

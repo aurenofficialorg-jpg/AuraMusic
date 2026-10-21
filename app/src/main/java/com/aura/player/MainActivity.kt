@@ -26,10 +26,11 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 
 enum class Tab(val label: String, val icon: ImageVector) {
+    Home("Home", Icons.Rounded.Home),
     Songs("Songs", Icons.Rounded.MusicNote),
     Albums("Albums", Icons.Rounded.Album),
     Artists("Artists", Icons.Rounded.Person),
-    Playlists("Playlists", Icons.Rounded.LibraryMusic)
+    Playlists("Library", Icons.Rounded.LibraryMusic)
 }
 
 class MainActivity : ComponentActivity() {
@@ -39,7 +40,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            val dark = isSystemInDarkTheme()
+            val mode by vm.theme.collectAsState()
+            val dark = when (mode) { 1 -> true; 2 -> false; else -> isSystemInDarkTheme() }
             val scheme = if (dark) darkColorScheme(
                 primary = Accent, background = Color.Black, surface = Color.Black,
                 surfaceVariant = Color(0xFF1C1C1E), onSurface = Color.White, onSurfaceVariant = Color(0xFF9A9AA0)
@@ -59,7 +61,7 @@ class MainActivity : ComponentActivity() {
         val songs by vm.songs.collectAsState()
         var granted by remember { mutableStateOf(false) }
         var showPlayer by remember { mutableStateOf(false) }
-        var tab by remember { mutableStateOf(Tab.Songs) }
+        var tab by remember { mutableStateOf(Tab.Home) }
         var detail by remember { mutableStateOf<Pair<String, String>?>(null) }
 
         val perms = remember {
@@ -91,8 +93,11 @@ class MainActivity : ComponentActivity() {
             Column(Modifier.fillMaxSize()) {
                 Box(Modifier.weight(1f)) {
                     val d = detail
-                    if (d != null) DetailScreen(vm, d.first, d.second) { detail = null }
-                    else when (tab) {
+                    if (d != null) {
+                        if (d.second == "settings") SettingsScreen(vm) { detail = null }
+                        else DetailScreen(vm, d.first, d.second) { detail = null }
+                    } else when (tab) {
+                        Tab.Home -> HomeScreen(vm) { detail = "Settings" to "settings" }
                         Tab.Songs -> SongListScreen(vm, "Songs", songs, null, true)
                         Tab.Albums -> AlbumsScreen(vm) { t, k -> detail = t to k }
                         Tab.Artists -> ArtistsScreen(vm) { t, k -> detail = t to k }
@@ -104,7 +109,7 @@ class MainActivity : ComponentActivity() {
                     Tab.values().forEach { t ->
                         NavigationBarItem(
                             selected = tab == t, onClick = { tab = t; detail = null },
-                            icon = { Icon(t.icon, t.label) }, label = { Text(t.label) },
+                            icon = { Icon(t.icon, t.label) }, label = { Text(t.label, maxLines = 1) },
                             colors = NavigationBarItemDefaults.colors(
                                 selectedIconColor = Accent, selectedTextColor = Accent, indicatorColor = Accent.copy(alpha = 0.15f)
                             )

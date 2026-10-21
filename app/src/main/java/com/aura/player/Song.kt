@@ -14,6 +14,7 @@ data class Song(
     val album: String,
     val albumId: Long,
     val durationMs: Long,
+    val dateAdded: Long = 0L,
 ) {
     val uri: Uri get() = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id)
 
@@ -43,6 +44,7 @@ object MusicRepository {
             MediaStore.Audio.Media.ALBUM,
             MediaStore.Audio.Media.ALBUM_ID,
             MediaStore.Audio.Media.DURATION,
+            MediaStore.Audio.Media.DATE_ADDED,
         )
         val sel = "${MediaStore.Audio.Media.IS_MUSIC} != 0 AND ${MediaStore.Audio.Media.DURATION} >= 30000"
         resolver.query(
@@ -55,11 +57,12 @@ object MusicRepository {
             val iAlbum = c.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM)
             val iAlbumId = c.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM_ID)
             val iDur = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
+            val iAdded = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_ADDED)
             while (c.moveToNext()) {
                 val artist = c.getString(iArtist)?.takeUnless { it == "<unknown>" } ?: "Unknown Artist"
                 out += Song(
                     c.getLong(iId), c.getString(iTitle) ?: "Unknown", artist,
-                    c.getString(iAlbum) ?: "Unknown Album", c.getLong(iAlbumId), c.getLong(iDur)
+                    c.getString(iAlbum) ?: "Unknown Album", c.getLong(iAlbumId), c.getLong(iDur), c.getLong(iAdded)
                 )
             }
         }

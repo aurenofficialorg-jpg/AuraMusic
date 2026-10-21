@@ -38,6 +38,24 @@ class Store(ctx: Context) {
         get() = sp.getInt("bass", 0)
         set(v) = sp.edit().putInt("bass", v).apply()
 
+    fun counts(): Map<Long, Int> {
+        val o = JSONObject(sp.getString("counts", "{}") ?: "{}")
+        return o.keys().asSequence().associate { it.toLong() to o.getInt(it) }
+    }
+    fun saveCounts(m: Map<Long, Int>) {
+        val o = JSONObject(); m.forEach { (k, v) -> o.put(k.toString(), v) }
+        sp.edit().putString("counts", o.toString()).apply()
+    }
+    var theme: Int
+        get() = sp.getInt("theme", 0)
+        set(v) = sp.edit().putInt("theme", v).apply()
+    var accentIdx: Int
+        get() = sp.getInt("accent", 0)
+        set(v) = sp.edit().putInt("accent", v).apply()
+    var speed: Float
+        get() = sp.getFloat("speed", 1f)
+        set(v) = sp.edit().putFloat("speed", v).apply()
+
     fun lyrics(id: Long): String? = File(dir, "$id.lrc").takeIf { it.exists() }?.readText()
     fun saveLyrics(id: Long, text: String) = File(dir, "$id.lrc").writeText(text)
 }

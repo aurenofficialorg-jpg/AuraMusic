@@ -1,6 +1,22 @@
 package com.aura.player
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import android.content.Intent
+import android.graphics.Bitmap
+import android.os.Build
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -43,7 +59,11 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 
-val Accent = Color(0xFFFA2D48)
+var Accent by mutableStateOf(Color(0xFFFA2D48))
+val AccentChoices = listOf(
+    Color(0xFFFA2D48), Color(0xFF0A84FF), Color(0xFF30D158),
+    Color(0xFFFF9F0A), Color(0xFFBF5AF2), Color(0xFF64D2FF)
+)
 
 private fun fmt(ms: Long): String {
     val s = (ms / 1000).coerceAtLeast(0)
@@ -78,11 +98,20 @@ fun SongListScreen(
     val ui by vm.ui.collectAsState()
     val favs by vm.favs.collectAsState()
     val playlists by vm.playlists.collectAsState()
+    val ctx = LocalContext.current
     var query by remember { mutableStateOf("") }
     var pickFor by remember { mutableStateOf<Song?>(null) }
-    val shown = remember(songs, query) {
-        if (query.isBlank()) songs else songs.filter {
+    var sort by remember { mutableIntStateOf(0) }
+    var sortMenu by remember { mutableStateOf(false) }
+    val shown = remember(songs, query, sort) {
+        val f = if (query.isBlank()) songs else songs.filter {
             it.title.contains(query, true) || it.artist.contains(query, true) || it.album.contains(query, true)
+        }
+        if (!searchable) f else when (sort) {
+            1 -> f.sortedBy { it.artist.lowercase() }
+            2 -> f.sortedByDescending { it.dateAdded }
+            3 -> f.sortedByDescending { it.durationMs }
+            else -> f
         }
     }
 
@@ -91,6 +120,14 @@ fun SongListScreen(
             Row(Modifier.padding(start = if (onBack != null) 6.dp else 20.dp, top = 16.dp, bottom = 10.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (onBack != null) IconButton(onClick = onBack) { Icon(Icons.Rounded.ArrowBackIosNew, "Back", tint = Accent) }
                 Text(title, fontSize = 30.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (searchable) Box {
+                    IconButton({ sortMenu = true }) { Icon(Icons.Rounded.SwapVert, "Sort", tint = Accent) }
+                    DropdownMenu(sortMenu, { sortMenu = false }) {
+                        listOf("Title", "Artist", "Recently Added", "Longest").forEachIndexed { i, n ->
+                            DropdownMenuItem({ Text(n, color = if (sort == i) Accent else Color.Unspecified) }, { sort = i; sortMenu = false })
+                        }
+                    }
+                }
                 headerAction()
             }
         }
@@ -133,7 +170,7 @@ fun SongListScreen(
                     Text(song.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 16.sp, color = if (active) Accent else MaterialTheme.colorScheme.onSurface)
                     Text(song.artist, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 14.sp, color = sub())
                 }
-                if (active && ui.isPlaying) Icon(Icons.Rounded.GraphicEq, null, tint = Accent)
+                if (active && ui.isPlaying) EqBars()
                 Box {
                     IconButton(onClick = { menu = true }) { Icon(Icons.Rounded.MoreHoriz, "More", tint = sub()) }
                     DropdownMenu(menu, { menu = false }) {
@@ -144,6 +181,13 @@ fun SongListScreen(
                             leadingIcon = { Icon(if (song.id in favs) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, null) }
                         )
                         DropdownMenuItem({ Text("Add to Playlist") }, { pickFor = song; menu = false }, leadingIcon = { Icon(Icons.Rounded.PlaylistAdd, null) })
+                        DropdownMenuItem({ Text("Share") }, {
+                            menu = false
+                            val i = Intent(Intent.ACTION_SEND).apply {
+                                type = "audio/*"; putExtra(Intent.EXTRA_STREAM, song.uri); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                            ctx.startActivity(Intent.createChooser(i, null))
+                        }, leadingIcon = { Icon(Icons.Rounded.Share, null) })
                         if (inPlaylist != null) DropdownMenuItem({ Text("Remove from this Playlist") }, { vm.removeFromPlaylist(inPlaylist, song.id); menu = false }, leadingIcon = { Icon(Icons.Rounded.Delete, null) })
                     }
                 }
@@ -313,16 +357,33 @@ fun NowPlaying(vm: PlayerViewModel, onClose: () -> Unit) {
         while (isActive && ui.isPlaying) { if (!dragging) pos = vm.position(); delay(400) }
     }
 
-    val tint by produceState(Color(0xFF4A2A32), song?.id) {
-        val s = song ?: return@produceState
-        val c = withContext(Dispatchers.IO) { ArtCache.load(ctx, s, 512)?.let { ArtCache.tone(it) } }
-        if (c != null) value = c
+    val bmp by produceState<Bitmap?>(null, song?.id) {
+        val s = song
+        value = if (s == null) null else withContext(Dispatchers.IO) { ArtCache.load(ctx, s, 512) }
     }
+    val tint = remember(bmp) { bmp?.let { ArtCache.tone(it) } ?: Color(0xFF3A2A30) }
     val bg by animateColorAsState(tint, tween(600), label = "bg")
     val artScale by animateFloatAsState(if (ui.isPlaying) 1f else 0.84f, label = "art")
     val dur = ui.durationMs.coerceAtLeast(1L)
 
-    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(bg, bg.copy(alpha = 0.35f), Color.Black))).clickable(enabled = false) {}) {
+    var dragY by remember { mutableFloatStateOf(0f) }
+    val b = bmp
+    val blurOk = b != null && Build.VERSION.SDK_INT >= 31
+    Box(
+        Modifier.fillMaxSize().background(Color.Black).clickable(enabled = false) {}
+            .pointerInput(Unit) {
+                detectVerticalDragGestures(onDragEnd = { if (dragY > 160) onClose(); dragY = 0f }, onDragCancel = { dragY = 0f }) { _, d -> dragY += d }
+            }
+    ) {
+        if (blurOk) Image(b!!.asImageBitmap(), null, Modifier.fillMaxSize().blur(80.dp), contentScale = ContentScale.Crop)
+        Box(
+            Modifier.fillMaxSize().background(
+                Brush.verticalGradient(
+                    if (blurOk) listOf(Color.Black.copy(0.35f), Color.Black.copy(0.65f), Color.Black.copy(0.95f))
+                    else listOf(bg, bg.copy(alpha = 0.5f), Color.Black)
+                )
+            )
+        )
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Spacer(Modifier.height(8.dp))
             Box(Modifier.width(40.dp).height(5.dp).clip(CircleShape).background(Color.White.copy(0.35f)).clickable(onClick = onClose))
@@ -330,7 +391,12 @@ fun NowPlaying(vm: PlayerViewModel, onClose: () -> Unit) {
 
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 when (mode) {
-                    0 -> BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    0 -> BoxWithConstraints(
+                        Modifier.fillMaxSize().pointerInput(Unit) {
+                            var dx = 0f
+                            detectHorizontalDragGestures(onDragEnd = { if (dx < -120) vm.next() else if (dx > 120) vm.previous(); dx = 0f }) { _, d -> dx += d }
+                        }, contentAlignment = Alignment.Center
+                    ) {
                         val side = minOf(maxWidth, maxHeight)
                         Art(song, side, 14.dp, Modifier.scale(artScale), px = 720)
                     }
@@ -473,5 +539,110 @@ private fun QueuePane(vm: PlayerViewModel, ui: PlayerUi) {
                 IconButton({ vm.removeAt(i) }) { Icon(Icons.Rounded.Close, "Remove", tint = Color.White.copy(0.7f)) }
             }
         }
+    }
+}
+
+
+/* ------------------------------------------------------------ extras */
+
+@Composable
+fun EqBars(color: Color = Accent) {
+    val t = rememberInfiniteTransition(label = "eq")
+    Row(Modifier.height(18.dp).padding(end = 4.dp), horizontalArrangement = Arrangement.spacedBy(3.dp), verticalAlignment = Alignment.Bottom) {
+        listOf(380, 520, 440).forEachIndexed { i, d ->
+            val h by t.animateFloat(0.25f, 1f, infiniteRepeatable(tween(d, easing = LinearEasing), RepeatMode.Reverse), label = "b$i")
+            Box(Modifier.width(3.dp).fillMaxHeight(h).clip(RoundedCornerShape(2.dp)).background(color))
+        }
+    }
+}
+
+private fun LazyListScope.shelf(title: String, list: List<Song>, vm: PlayerViewModel) {
+    if (list.isEmpty()) return
+    item { Text(title, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 20.dp, top = 14.dp, bottom = 10.dp)) }
+    item {
+        LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            items(list, key = { it.id }) { s ->
+                Column(Modifier.width(140.dp).clickable { vm.play(s, list) }) {
+                    Art(s, 140.dp, 12.dp, px = 320)
+                    Spacer(Modifier.height(6.dp))
+                    Text(s.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 14.sp)
+                    Text(s.artist, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun HomeScreen(vm: PlayerViewModel, openSettings: () -> Unit) {
+    val songs by vm.songs.collectAsState()
+    val recents by vm.recents.collectAsState()
+    val favs by vm.favs.collectAsState()
+    val counts by vm.counts.collectAsState()
+    val recent = remember(recents, songs) { recents.mapNotNull { vm.songById(it) }.take(15) }
+    val top = remember(counts, songs) { counts.entries.sortedByDescending { it.value }.mapNotNull { vm.songById(it.key) }.take(15) }
+    val fav = remember(favs, songs) { songs.filter { it.id in favs }.take(15) }
+    val added = remember(songs) { songs.sortedByDescending { it.dateAdded }.take(15) }
+    LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), contentPadding = PaddingValues(bottom = 16.dp)) {
+        item {
+            Row(Modifier.padding(start = 20.dp, top = 16.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Listen Now", fontSize = 30.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                IconButton(openSettings) { Icon(Icons.Rounded.Settings, "Settings", tint = Accent) }
+            }
+        }
+        item {
+            Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                PillButton("Play All", Icons.Rounded.PlayArrow, Modifier.weight(1f)) { vm.playAll(songs, false) }
+                PillButton("Shuffle All", Icons.Rounded.Shuffle, Modifier.weight(1f)) { vm.playAll(songs, true) }
+            }
+        }
+        shelf("Recently Played", recent, vm)
+        shelf("Most Played", top, vm)
+        shelf("Favourites", fav, vm)
+        shelf("Recently Added", added, vm)
+    }
+}
+
+@Composable
+private fun Chip(label: String, selected: Boolean, onClick: () -> Unit) {
+    Box(
+        Modifier.clip(RoundedCornerShape(20.dp)).background(if (selected) Accent else MaterialTheme.colorScheme.surfaceVariant)
+            .clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 9.dp)
+    ) { Text(label, color = if (selected) Color.White else MaterialTheme.colorScheme.onSurface, fontSize = 15.sp) }
+}
+
+@Composable
+private fun SectionLabel(t: String) =
+    Text(t.uppercase(), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 20.dp, top = 22.dp, bottom = 10.dp))
+
+@Composable
+fun SettingsScreen(vm: PlayerViewModel, onBack: () -> Unit) {
+    val theme by vm.theme.collectAsState()
+    val acc by vm.accentIdx.collectAsState()
+    val speed by vm.speed.collectAsState()
+    Column(Modifier.fillMaxSize().statusBarsPadding().verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
+        Row(Modifier.padding(start = 6.dp, top = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onBack) { Icon(Icons.Rounded.ArrowBackIosNew, "Back", tint = Accent) }
+            Text("Settings", fontSize = 30.sp, fontWeight = FontWeight.Bold)
+        }
+        SectionLabel("Appearance")
+        Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            listOf("System", "Dark", "Light").forEachIndexed { i, n -> Chip(n, theme == i) { vm.setTheme(i) } }
+        }
+        SectionLabel("Accent colour")
+        Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            AccentChoices.forEachIndexed { i, c ->
+                Box(
+                    Modifier.size(40.dp).clip(CircleShape).background(c).clickable { vm.setAccent(i) },
+                    contentAlignment = Alignment.Center
+                ) { if (acc == i) Icon(Icons.Rounded.Check, null, tint = Color.White) }
+            }
+        }
+        SectionLabel("Playback speed")
+        Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            listOf(0.75f, 1f, 1.25f, 1.5f, 2f).forEach { s -> Chip("${s}x", speed == s) { vm.setSpeed(s) } }
+        }
+        SectionLabel("About")
+        Text("Aura Music 2.0\nOffline player. Your music never leaves your phone.", modifier = Modifier.padding(horizontal = 20.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
