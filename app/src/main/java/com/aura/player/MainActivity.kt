@@ -35,6 +35,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
 
 enum class Tab(val label: String, val icon: ImageVector) {
     Home("Home", Icons.Rounded.Home),
@@ -171,18 +176,32 @@ class MainActivity : ComponentActivity() {
                             contentAlignment = Alignment.TopCenter
                         ) { Box(Modifier.widthIn(max = 720.dp)) { MiniPlayer(vm) { showPlayer = true } } }
                     }
-                    if (!rail) NavigationBar(
-                        containerColor = Color.Transparent, tonalElevation = 0.dp,
-                        modifier = Modifier.glass(RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp))
+                    if (!rail) Row(
+                        Modifier.fillMaxWidth()
+                            .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Bottom))
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                            .height(64.dp)
+                            .glass(RoundedCornerShape(32.dp))
+                            .padding(horizontal = 6.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         Tab.values().forEach { t ->
-                            NavigationBarItem(
-                                selected = tab == t, onClick = { tab = t; detail = null },
-                                icon = { Icon(t.icon, t.label) }, label = { Text(t.label, maxLines = 1) },
-                                colors = NavigationBarItemDefaults.colors(
-                                    selectedIconColor = Accent, selectedTextColor = Accent, indicatorColor = Accent.copy(alpha = 0.15f)
+                            val sel = tab == t
+                            val tint = if (sel) Accent else MaterialTheme.colorScheme.onSurfaceVariant
+                            Column(
+                                Modifier.weight(1f).fillMaxHeight()
+                                    .clip(RoundedCornerShape(26.dp))
+                                    .background(if (sel) Accent.copy(alpha = 0.15f) else Color.Transparent)
+                                    .clickable { tab = t; detail = null },
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center
+                            ) {
+                                Icon(t.icon, t.label, tint = tint, modifier = Modifier.size(24.dp))
+                                Text(
+                                    t.label, color = tint, maxLines = 1, softWrap = false,
+                                    fontSize = 11.sp, fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Medium
                                 )
-                            )
+                            }
                         }
                     }
                 }
