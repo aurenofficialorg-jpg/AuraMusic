@@ -47,6 +47,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     val theme = MutableStateFlow(store.theme)
     val accentIdx = MutableStateFlow(store.accentIdx)
     val speed = MutableStateFlow(store.speed)
+    val source = MutableStateFlow("Library")
 
     private var byId: Map<Long, Song> = emptyMap()
     private val itemCache = HashMap<Long, MediaItem>()
@@ -106,16 +107,18 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
     fun position(): Long = controller?.currentPosition ?: 0L
 
-    fun play(song: Song, list: List<Song>) {
+    fun play(song: Song, list: List<Song>, src: String = "Library") {
         val c = controller ?: return
         if (_ui.value.currentId == song.id) { togglePlay(); return }
+        source.value = src
         c.setMediaItems(list.map { item(it) }, list.indexOf(song).coerceAtLeast(0), 0L)
         c.prepare(); c.play()
     }
 
-    fun playAll(list: List<Song>, shuffle: Boolean) {
+    fun playAll(list: List<Song>, shuffle: Boolean, src: String = "Library") {
         val c = controller ?: return
         if (list.isEmpty()) return
+        source.value = src
         c.shuffleModeEnabled = shuffle
         c.setMediaItems(list.map { item(it) }, if (shuffle) list.indices.random() else 0, 0L)
         c.prepare(); c.play()

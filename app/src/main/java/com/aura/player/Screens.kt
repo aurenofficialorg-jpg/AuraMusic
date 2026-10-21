@@ -6,7 +6,14 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import android.content.Context
 import android.content.Intent
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
+import android.provider.Settings
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.lerp
+import kotlin.math.roundToInt
 import android.graphics.Bitmap
 import android.os.Build
 import androidx.compose.foundation.Image
@@ -153,8 +160,8 @@ fun SongListScreen(
         }
         if (query.isBlank() && songs.isNotEmpty()) item {
             Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                PillButton("Play", Icons.Rounded.PlayArrow, Modifier.weight(1f)) { vm.playAll(songs, false) }
-                PillButton("Shuffle", Icons.Rounded.Shuffle, Modifier.weight(1f)) { vm.playAll(songs, true) }
+                PillButton("Play", Icons.Rounded.PlayArrow, Modifier.weight(1f)) { vm.playAll(songs, false, title) }
+                PillButton("Shuffle", Icons.Rounded.Shuffle, Modifier.weight(1f)) { vm.playAll(songs, true, title) }
             }
         }
         if (songs.isEmpty()) item { Text("Nothing here yet.", color = sub(), modifier = Modifier.padding(24.dp)) }
@@ -162,7 +169,7 @@ fun SongListScreen(
             val active = ui.currentId == song.id
             var menu by remember { mutableStateOf(false) }
             Row(
-                Modifier.fillMaxWidth().clickable { vm.play(song, shown) }.padding(start = 16.dp, top = 5.dp, bottom = 5.dp),
+                Modifier.fillMaxWidth().clickable { vm.play(song, shown, title) }.padding(start = 16.dp, top = 5.dp, bottom = 5.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Art(song, 52.dp, 8.dp)
@@ -337,12 +344,50 @@ fun MiniPlayer(vm: PlayerViewModel, onOpen: () -> Unit) {
 
 /* ------------------------------------------------------------ now playing */
 
+private fun formatLabel(mime: String): String {
+    val m = mime.lowercase()
+    return when {
+        "flac" in m || "wav" in m || "alac" in m || "aiff" in m -> "LOSSLESS"
+        "mpeg" in m || "mp3" in m -> "MP3"
+        "mp4" in m || "m4a" in m || "aac" in m -> "AAC"
+        "ogg" in m || "opus" in m -> "OGG"
+        else -> "AUDIO"
+    }
+}
+
+private fun outputName(am: AudioManager): String {
+    val d = am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+    val bt = d.firstOrNull { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP }
+    return when {
+        bt != null -> bt.productName?.toString()?.takeIf { it.isNotBlank() } ?: "Bluetooth"
+        d.any { it.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES || it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET || it.type == AudioDeviceInfo.TYPE_USB_HEADSET } -> "Headphones"
+        else -> "This Phone"
+    }
+}
+
+@Composable
+private fun Badge(label: String) {
+    Box(Modifier.clip(RoundedCornerShape(6.dp)).background(Color.White.copy(0.12f)).padding(horizontal = 8.dp, vertical = 3.dp)) {
+        Text(label, color = Color.White.copy(0.85f), fontSize = 10.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.8.sp)
+    }
+}
+
+@Composable
+private fun ToggleIcon(icon: ImageVector, on: Boolean, desc: String, onClick: () -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        IconButton(onClick) { Icon(icon, desc, tint = if (on) Accent else Color.White.copy(0.7f)) }
+        Box(Modifier.size(4.dp).clip(CircleShape).background(if (on) Accent else Color.Transparent))
+    }
+}
+
 @Composable
 fun NowPlaying(vm: PlayerViewModel, onClose: () -> Unit) {
     val ctx = LocalContext.current
     val songs by vm.songs.collectAsState()
     val ui by vm.ui.collectAsState()
     val favs by vm.favs.collectAsState()
+    val playlists by vm.playlists.collectAsState()
+    val source by vm.source.collectAsState()
     val sleep by vm.sleepMin.collectAsState()
     val song = remember(songs, ui.currentId) { vm.songById(ui.currentId) }
 
@@ -352,6 +397,22 @@ fun NowPlaying(vm: PlayerViewModel, onClose: () -> Unit) {
     var mode by remember { mutableIntStateOf(0) } // 0 art, 1 lyrics, 2 queue
     var showEq by remember { mutableStateOf(false) }
     var showSleep by remember { mutableStateOf(false) }
+    var menu by remember { mutableStateOf(false) }
+    var pick by remember { mutableStateOf(false) }
+
+    // Volume + output device
+    val am = remember { ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
+    val maxVol = remember { am.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1) }
+    var vol by remember { mutableFloatStateOf(am.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / maxVol) }
+    var volDrag by remember { mutableStateOf(false) }
+    var device by remember { mutableStateOf("This Phone") }
+    LaunchedEffect(Unit) {
+        while (isActive) {
+            if (!volDrag) vol = am.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / maxVol
+            device = outputName(am)
+            delay(1000)
+        }
+    }
 
     LaunchedEffect(ui.isPlaying, ui.currentId) {
         pos = vm.position()
@@ -364,33 +425,50 @@ fun NowPlaying(vm: PlayerViewModel, onClose: () -> Unit) {
     }
     val tint = remember(bmp) { bmp?.let { ArtCache.tone(it) } ?: Color(0xFF3A2A30) }
     val bg by animateColorAsState(tint, tween(600), label = "bg")
-    val artScale by animateFloatAsState(if (ui.isPlaying) 1f else 0.84f, label = "art")
+    val glow = lerp(bg, Accent, 0.30f)
+    val artScale by animateFloatAsState(if (ui.isPlaying) 1f else 0.86f, label = "art")
     val dur = ui.durationMs.coerceAtLeast(1L)
-
     var dragY by remember { mutableFloatStateOf(0f) }
-    val b = bmp
-    val blurOk = b != null && Build.VERSION.SDK_INT >= 31
+    val white = Color.White
+
     Box(
         Modifier.fillMaxSize().background(Color.Black).clickable(enabled = false) {}
             .pointerInput(Unit) {
                 detectVerticalDragGestures(onDragEnd = { if (dragY > 160) onClose(); dragY = 0f }, onDragCancel = { dragY = 0f }) { _, d -> dragY += d }
             }
     ) {
-        if (blurOk) Image(b!!.asImageBitmap(), null, Modifier.fillMaxSize().blur(80.dp), contentScale = ContentScale.Crop)
-        Box(
-            Modifier.fillMaxSize().background(
-                Brush.verticalGradient(
-                    if (blurOk) listOf(Color.Black.copy(0.35f), Color.Black.copy(0.65f), Color.Black.copy(0.95f))
-                    else listOf(bg, bg.copy(alpha = 0.5f), Color.Black)
-                )
-            )
-        )
-        Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Spacer(Modifier.height(8.dp))
-            Box(Modifier.width(40.dp).height(5.dp).clip(CircleShape).background(Color.White.copy(0.35f)).clickable(onClick = onClose))
-            Spacer(Modifier.height(10.dp))
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(glow, Color(0xFF0B0507), Color.Black))))
+        Column(
+            Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            // Header
+            Row(Modifier.fillMaxWidth().height(52.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClose) { Icon(Icons.Rounded.KeyboardArrowDown, "Close", tint = white, modifier = Modifier.size(30.dp)) }
+                Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("PLAYING FROM", color = white.copy(0.6f), fontSize = 10.sp, letterSpacing = 1.2.sp)
+                    Text(source, color = white, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                Box {
+                    IconButton({ menu = true }) { Icon(Icons.Rounded.MoreHoriz, "More", tint = white) }
+                    DropdownMenu(menu, { menu = false }) {
+                        DropdownMenuItem({ Text("Sleep timer") }, { menu = false; showSleep = true }, leadingIcon = { Icon(Icons.Rounded.Timer, null) })
+                        DropdownMenuItem({ Text("Equalizer") }, { menu = false; showEq = true }, leadingIcon = { Icon(Icons.Rounded.Tune, null) })
+                        DropdownMenuItem({ Text("Share") }, {
+                            menu = false
+                            song?.let { s ->
+                                val i = Intent(Intent.ACTION_SEND).apply {
+                                    type = "audio/*"; putExtra(Intent.EXTRA_STREAM, s.uri); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                ctx.startActivity(Intent.createChooser(i, null))
+                            }
+                        }, leadingIcon = { Icon(Icons.Rounded.Share, null) })
+                    }
+                }
+            }
 
-            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+            // Art / lyrics / queue
+            Box(Modifier.weight(1f).fillMaxWidth().padding(vertical = 10.dp), contentAlignment = Alignment.Center) {
                 when (mode) {
                     0 -> BoxWithConstraints(
                         Modifier.fillMaxSize().pointerInput(Unit) {
@@ -399,54 +477,104 @@ fun NowPlaying(vm: PlayerViewModel, onClose: () -> Unit) {
                         }, contentAlignment = Alignment.Center
                     ) {
                         val side = minOf(maxWidth, maxHeight)
-                        Art(song, side, 14.dp, Modifier.scale(artScale), px = 720)
+                        Art(song, side, 22.dp, Modifier.scale(artScale).shadow(24.dp, RoundedCornerShape(22.dp)), px = 720)
                     }
                     1 -> LyricsPane(vm, song, pos)
                     else -> QueuePane(vm, ui)
                 }
             }
 
-            Spacer(Modifier.height(14.dp))
+            // Title row
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text(song?.title ?: "", color = Color.White, fontSize = 21.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(song?.artist ?: "", color = Color.White.copy(0.7f), fontSize = 17.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(song?.title ?: "", color = white, fontSize = 26.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        song?.let { "${it.artist} — ${it.album}" } ?: "", color = Accent, fontSize = 16.sp,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis
+                    )
                 }
                 val fav = song != null && song.id in favs
                 IconButton({ song?.let { vm.toggleFav(it.id) } }) {
-                    Icon(if (fav) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, "Favourite", tint = if (fav) Accent else Color.White)
+                    Icon(if (fav) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, "Favourite", tint = if (fav) Accent else white.copy(0.8f))
                 }
+                IconButton({ pick = true }) { Icon(Icons.Rounded.PlaylistAdd, "Add to playlist", tint = white.copy(0.8f)) }
             }
+            Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Badge(formatLabel(song?.mime ?: "")); Badge("OFFLINE")
+            }
+
+            // Progress
             Slider(
                 value = if (dragging) dragValue else (pos.toFloat() / dur).coerceIn(0f, 1f),
                 onValueChange = { dragging = true; dragValue = it },
                 onValueChangeFinished = { vm.seekTo((dragValue * dur).toLong()); pos = (dragValue * dur).toLong(); dragging = false },
-                colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Color.White, inactiveTrackColor = Color.White.copy(0.25f))
+                colors = SliderDefaults.colors(thumbColor = Accent, activeTrackColor = Accent, inactiveTrackColor = white.copy(0.2f)),
+                thumb = { Box(Modifier.size(14.dp).clip(CircleShape).background(Accent)) }
             )
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                 val p = if (dragging) (dragValue * dur).toLong() else pos
-                Text(fmt(p), color = Color.White.copy(0.6f), fontSize = 12.sp)
-                Text("-" + fmt(dur - p), color = Color.White.copy(0.6f), fontSize = 12.sp)
+                Text(fmt(p), color = white.copy(0.6f), fontSize = 12.sp)
+                Text("-" + fmt(dur - p), color = white.copy(0.6f), fontSize = 12.sp)
             }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-                IconButton(vm::previous, Modifier.size(68.dp)) { Icon(Icons.Rounded.SkipPrevious, "Previous", tint = Color.White, modifier = Modifier.size(48.dp)) }
-                IconButton(vm::togglePlay, Modifier.size(80.dp)) { Icon(if (ui.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, "Play/Pause", tint = Color.White, modifier = Modifier.size(68.dp)) }
-                IconButton(vm::next, Modifier.size(68.dp)) { Icon(Icons.Rounded.SkipNext, "Next", tint = Color.White, modifier = Modifier.size(48.dp)) }
+
+            // Transport
+            Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                ToggleIcon(Icons.Rounded.Shuffle, ui.shuffle, "Shuffle", vm::toggleShuffle)
+                IconButton(vm::previous, Modifier.size(60.dp)) { Icon(Icons.Rounded.SkipPrevious, "Previous", tint = white, modifier = Modifier.size(42.dp)) }
+                Box(
+                    Modifier.size(78.dp).shadow(20.dp, CircleShape, ambientColor = Accent, spotColor = Accent).clip(CircleShape)
+                        .background(Brush.linearGradient(listOf(Accent.copy(alpha = 0.85f), Accent))).clickable(onClick = vm::togglePlay),
+                    contentAlignment = Alignment.Center
+                ) { Icon(if (ui.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, "Play/Pause", tint = white, modifier = Modifier.size(42.dp)) }
+                IconButton(vm::next, Modifier.size(60.dp)) { Icon(Icons.Rounded.SkipNext, "Next", tint = white, modifier = Modifier.size(42.dp)) }
+                ToggleIcon(
+                    if (ui.repeat == Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
+                    ui.repeat != Player.REPEAT_MODE_OFF, "Repeat", vm::cycleRepeat
+                )
             }
-            Row(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-                val off = Color.White.copy(0.6f)
-                IconButton({ mode = if (mode == 1) 0 else 1 }) { Icon(Icons.Rounded.FormatQuote, "Lyrics", tint = if (mode == 1) Accent else off) }
-                IconButton({ mode = if (mode == 2) 0 else 2 }) { Icon(Icons.Rounded.QueueMusic, "Queue", tint = if (mode == 2) Accent else off) }
-                IconButton({ showEq = true }) { Icon(Icons.Rounded.Tune, "Equalizer", tint = off) }
-                IconButton({ showSleep = true }) { Icon(Icons.Rounded.Timer, "Sleep timer", tint = if (sleep > 0) Accent else off) }
-                IconButton(vm::toggleShuffle) { Icon(Icons.Rounded.Shuffle, "Shuffle", tint = if (ui.shuffle) Accent else off) }
-                IconButton(vm::cycleRepeat) {
-                    Icon(if (ui.repeat == Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat, "Repeat", tint = if (ui.repeat == Player.REPEAT_MODE_OFF) off else Accent)
+
+            // Volume
+            Row(Modifier.fillMaxWidth().padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.VolumeDown, null, tint = white.copy(0.6f), modifier = Modifier.size(20.dp))
+                Slider(
+                    value = vol,
+                    onValueChange = { vol = it; volDrag = true; am.setStreamVolume(AudioManager.STREAM_MUSIC, (it * maxVol).roundToInt(), 0) },
+                    onValueChangeFinished = { volDrag = false },
+                    modifier = Modifier.weight(1f).padding(horizontal = 6.dp),
+                    colors = SliderDefaults.colors(thumbColor = white, activeTrackColor = white, inactiveTrackColor = white.copy(0.2f)),
+                    thumb = { Box(Modifier.size(12.dp).clip(CircleShape).background(white)) }
+                )
+                Icon(Icons.Rounded.VolumeUp, null, tint = white.copy(0.6f), modifier = Modifier.size(20.dp))
+            }
+
+            // Bottom row: lyrics, output device, queue
+            Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                IconButton({ mode = if (mode == 1) 0 else 1 }) { Icon(Icons.Rounded.FormatQuote, "Lyrics", tint = if (mode == 1) Accent else white.copy(0.7f)) }
+                Row(
+                    Modifier.clip(RoundedCornerShape(20.dp)).background(white.copy(0.10f)).clickable {
+                        try { ctx.startActivity(Intent(Settings.Panel.ACTION_VOLUME)) }
+                        catch (_: Exception) { try { ctx.startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) } catch (_: Exception) { } }
+                    }.padding(horizontal = 14.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Rounded.Headphones, null, tint = white.copy(0.85f), modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(device, color = white.copy(0.85f), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 180.dp))
                 }
+                IconButton({ mode = if (mode == 2) 0 else 2 }) { Icon(Icons.Rounded.QueueMusic, "Queue", tint = if (mode == 2) Accent else white.copy(0.7f)) }
             }
         }
     }
 
+    if (pick) AlertDialog(
+        onDismissRequest = { pick = false },
+        confirmButton = { TextButton({ pick = false }) { Text("Cancel") } },
+        title = { Text("Add to Playlist") },
+        text = {
+            if (playlists.isEmpty()) Text("Create a playlist first in the Library tab.")
+            else Column { playlists.keys.sorted().forEach { n -> TextButton({ song?.let { vm.addToPlaylist(n, it.id) }; pick = false }) { Text(n, color = Accent) } } }
+        }
+    )
     if (showSleep) AlertDialog(
         onDismissRequest = { showSleep = false },
         confirmButton = { TextButton({ showSleep = false }) { Text("Close") } },
@@ -563,7 +691,7 @@ private fun LazyListScope.shelf(title: String, list: List<Song>, vm: PlayerViewM
     item {
         LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             items(list, key = { it.id }) { s ->
-                Column(Modifier.width(140.dp).clickable { vm.play(s, list) }) {
+                Column(Modifier.width(140.dp).clickable { vm.play(s, list, title) }) {
                     Art(s, 140.dp, 12.dp, px = 320)
                     Spacer(Modifier.height(6.dp))
                     Text(s.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 14.sp)
