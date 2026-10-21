@@ -925,7 +925,7 @@ fun SettingsScreen(vm: PlayerViewModel, onBack: () -> Unit) {
             Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
                 AccentChoices.forEachIndexed { i, c ->
                     Box(Modifier.size(d).bouncyClick(0.85f) { vm.setAccent(i) }.clip(CircleShape).background(c), contentAlignment = Alignment.Center) {
-                        AnimatedVisibility(acc == i, enter = scaleIn(spring(0.5f, 500f)) + fadeIn(), exit = scaleOut() + fadeOut()) {
+                        androidx.compose.animation.AnimatedVisibility(visible = acc == i, enter = scaleIn(spring(0.5f, 500f)) + fadeIn(), exit = scaleOut() + fadeOut()) {
                             Icon(Icons.Rounded.Check, "Selected", tint = Color.White, modifier = Modifier.size(d / 1.8f))
                         }
                     }
