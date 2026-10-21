@@ -12,6 +12,7 @@ import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.provider.Settings
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.graphics.lerp
 import kotlin.math.roundToInt
 import android.graphics.Bitmap
@@ -80,12 +81,37 @@ private fun fmt(ms: Long): String {
 
 @Composable private fun sub() = MaterialTheme.colorScheme.onSurfaceVariant
 
+/** One horizontal gutter used by every screen so titles, rows, search and buttons share the same left/right edge. */
+val Gutter = 20.dp
+val ContentMaxWidth = 720.dp
+
+/** Lets a row of IconButtons sit flush with the gutter (their glyphs have 12dp of built-in inset). */
+private fun Modifier.bleed(h: Dp) = layout { m, c ->
+    val e = h.roundToPx()
+    val w = c.maxWidth + 2 * e
+    val p = m.measure(c.copy(minWidth = w, maxWidth = w))
+    layout(c.maxWidth, p.height) { p.placeRelative(-e, 0) }
+}
+
+@Composable
+fun ScreenHeader(title: String, onBack: (() -> Unit)? = null, actions: @Composable RowScope.() -> Unit = {}) {
+    Row(
+        Modifier.fillMaxWidth().heightIn(min = 56.dp)
+            .padding(start = if (onBack != null) 8.dp else Gutter, end = 8.dp, top = 12.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (onBack != null) IconButton(onClick = onBack) { Icon(Icons.Rounded.ArrowBackIosNew, "Back", tint = Accent) }
+        Text(title, fontSize = 30.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        actions()
+    }
+}
+
 /* ---------------------------------------------------------------- lists */
 
 @Composable
 fun ListRow(song: Song?, title: String, subtitle: String, onClick: () -> Unit, trailing: @Composable () -> Unit = {}) {
     Row(
-        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 7.dp),
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = Gutter, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Art(song, 52.dp, 8.dp)
@@ -125,9 +151,7 @@ fun SongListScreen(
 
     LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), contentPadding = PaddingValues(bottom = 16.dp)) {
         item {
-            Row(Modifier.padding(start = if (onBack != null) 6.dp else 20.dp, top = 16.dp, bottom = 10.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (onBack != null) IconButton(onClick = onBack) { Icon(Icons.Rounded.ArrowBackIosNew, "Back", tint = Accent) }
-                Text(title, fontSize = 30.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            ScreenHeader(title, onBack) {
                 if (searchable) Box {
                     IconButton({ sortMenu = true }) { Icon(Icons.Rounded.SwapVert, "Sort", tint = Accent) }
                     DropdownMenu(sortMenu, { sortMenu = false }) {
@@ -141,7 +165,7 @@ fun SongListScreen(
         }
         if (searchable) item {
             Box(
-                Modifier.padding(horizontal = 16.dp).fillMaxWidth().height(40.dp).clip(RoundedCornerShape(12.dp))
+                Modifier.padding(horizontal = Gutter).fillMaxWidth().heightIn(min = 40.dp).clip(RoundedCornerShape(12.dp))
                     .background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.CenterStart
             ) {
                 Row(Modifier.padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -159,17 +183,17 @@ fun SongListScreen(
             }
         }
         if (query.isBlank() && songs.isNotEmpty()) item {
-            Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(Modifier.padding(horizontal = Gutter, vertical = 14.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 PillButton("Play", Icons.Rounded.PlayArrow, Modifier.weight(1f)) { vm.playAll(songs, false, title) }
                 PillButton("Shuffle", Icons.Rounded.Shuffle, Modifier.weight(1f)) { vm.playAll(songs, true, title) }
             }
         }
-        if (songs.isEmpty()) item { Text("Nothing here yet.", color = sub(), modifier = Modifier.padding(24.dp)) }
+        if (songs.isEmpty()) item { Text("Nothing here yet.", color = sub(), modifier = Modifier.padding(horizontal = Gutter, vertical = 24.dp)) }
         items(shown, key = { it.id }, contentType = { 0 }) { song ->
             val active = ui.currentId == song.id
             var menu by remember { mutableStateOf(false) }
             Row(
-                Modifier.fillMaxWidth().clickable { vm.play(song, shown, title) }.padding(start = 16.dp, top = 5.dp, bottom = 5.dp),
+                Modifier.fillMaxWidth().clickable { vm.play(song, shown, title) }.padding(start = Gutter, end = 8.dp, top = 6.dp, bottom = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Art(song, 52.dp, 8.dp)
@@ -210,7 +234,7 @@ fun SongListScreen(
             title = { Text("Add to Playlist") },
             text = {
                 if (playlists.isEmpty()) Text("Create a playlist first in the Playlists tab.")
-                else Column { playlists.keys.sorted().forEach { n -> TextButton({ vm.addToPlaylist(n, s.id); pickFor = null }) { Text(n, color = Accent) } } }
+                else Column(Modifier.verticalScroll(rememberScrollState())) { playlists.keys.sorted().forEach { n -> TextButton({ vm.addToPlaylist(n, s.id); pickFor = null }) { Text(n, color = Accent) } } }
             }
         )
     }
@@ -219,7 +243,7 @@ fun SongListScreen(
 @Composable
 private fun PillButton(label: String, icon: ImageVector, modifier: Modifier, onClick: () -> Unit) {
     Row(
-        modifier.height(46.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant).clickable(onClick = onClick),
+        modifier.heightIn(min = 46.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant).clickable(onClick = onClick),
         horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(icon, null, tint = Accent); Spacer(Modifier.width(6.dp))
@@ -228,8 +252,7 @@ private fun PillButton(label: String, icon: ImageVector, modifier: Modifier, onC
 }
 
 @Composable
-private fun TabTitle(t: String) =
-    Text(t, fontSize = 30.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 20.dp, top = 16.dp, bottom = 10.dp))
+private fun TabTitle(t: String) = ScreenHeader(t)
 
 @Composable
 fun AlbumsScreen(vm: PlayerViewModel, open: (String, String) -> Unit) {
@@ -282,7 +305,7 @@ fun PlaylistsScreen(vm: PlayerViewModel, open: (String, String) -> Unit) {
 
 @Composable
 private fun SimpleRow(icon: ImageVector, title: String, subtitle: String, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = Gutter, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(52.dp).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
             Icon(icon, null, tint = Accent)
         }
@@ -324,7 +347,7 @@ fun MiniPlayer(vm: PlayerViewModel, onOpen: () -> Unit) {
     val song = remember(songs, ui.currentId) { vm.songById(ui.currentId) } ?: return
     var dx by remember { mutableFloatStateOf(0f) }
     Row(
-        Modifier.padding(horizontal = 10.dp, vertical = 6.dp).fillMaxWidth().height(62.dp).clip(RoundedCornerShape(16.dp))
+        Modifier.padding(horizontal = 12.dp, vertical = 6.dp).fillMaxWidth().height(62.dp).clip(RoundedCornerShape(16.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant).clickable(onClick = onOpen)
             .pointerInput(Unit) {
                 detectHorizontalDragGestures(
@@ -380,6 +403,7 @@ private fun ToggleIcon(icon: ImageVector, on: Boolean, desc: String, onClick: ()
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun NowPlaying(vm: PlayerViewModel, onClose: () -> Unit) {
     val ctx = LocalContext.current
@@ -431,19 +455,23 @@ fun NowPlaying(vm: PlayerViewModel, onClose: () -> Unit) {
     var dragY by remember { mutableFloatStateOf(0f) }
     val white = Color.White
 
-    Box(
+    BoxWithConstraints(
         Modifier.fillMaxSize().background(Color.Black).clickable(enabled = false) {}
             .pointerInput(Unit) {
                 detectVerticalDragGestures(onDragEnd = { if (dragY > 160) onClose(); dragY = 0f }, onDragCancel = { dragY = 0f }) { _, d -> dragY += d }
             }
     ) {
+        // Landscape phones / tablets get a two-pane layout; short screens drop the less important rows.
+        val wide = maxWidth >= 600.dp && maxWidth > maxHeight
+        val tight = if (wide) maxHeight < 420.dp else maxHeight < 640.dp
+        val playSize = if (tight) 64.dp else 78.dp
+        val skipSize = if (tight) 52.dp else 60.dp
+        val skipIcon = if (tight) 34.dp else 42.dp
+
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(glow, Color(0xFF0B0507), Color.Black))))
-        Column(
-            Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            // Header
-            Row(Modifier.fillMaxWidth().height(52.dp), verticalAlignment = Alignment.CenterVertically) {
+
+        val header: @Composable () -> Unit = {
+            Row(Modifier.fillMaxWidth().height(52.dp).bleed(12.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClose) { Icon(Icons.Rounded.KeyboardArrowDown, "Close", tint = white, modifier = Modifier.size(30.dp)) }
                 Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("PLAYING FROM", color = white.copy(0.6f), fontSize = 10.sp, letterSpacing = 1.2.sp)
@@ -466,9 +494,10 @@ fun NowPlaying(vm: PlayerViewModel, onClose: () -> Unit) {
                     }
                 }
             }
+        }
 
-            // Art / lyrics / queue
-            Box(Modifier.weight(1f).fillMaxWidth().padding(vertical = 10.dp), contentAlignment = Alignment.Center) {
+        val stage: @Composable (Modifier) -> Unit = { m ->
+            Box(m.padding(vertical = 10.dp), contentAlignment = Alignment.Center) {
                 when (mode) {
                     0 -> BoxWithConstraints(
                         Modifier.fillMaxSize().pointerInput(Unit) {
@@ -483,11 +512,13 @@ fun NowPlaying(vm: PlayerViewModel, onClose: () -> Unit) {
                     else -> QueuePane(vm, ui)
                 }
             }
+        }
 
+        val controls: @Composable ColumnScope.() -> Unit = {
             // Title row
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(song?.title ?: "", color = white, fontSize = 26.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(Modifier.fillMaxWidth().bleed(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                    Text(song?.title ?: "", color = white, fontSize = if (tight) 22.sp else 26.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(
                         song?.let { "${it.artist} — ${it.album}" } ?: "", color = Accent, fontSize = 16.sp,
                         maxLines = 1, overflow = TextOverflow.Ellipsis
@@ -499,7 +530,7 @@ fun NowPlaying(vm: PlayerViewModel, onClose: () -> Unit) {
                 }
                 IconButton({ pick = true }) { Icon(Icons.Rounded.PlaylistAdd, "Add to playlist", tint = white.copy(0.8f)) }
             }
-            Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (!tight) Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Badge(formatLabel(song?.mime ?: "")); Badge("OFFLINE")
             }
 
@@ -518,15 +549,15 @@ fun NowPlaying(vm: PlayerViewModel, onClose: () -> Unit) {
             }
 
             // Transport
-            Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().padding(top = 6.dp).bleed(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 ToggleIcon(Icons.Rounded.Shuffle, ui.shuffle, "Shuffle", vm::toggleShuffle)
-                IconButton(vm::previous, Modifier.size(60.dp)) { Icon(Icons.Rounded.SkipPrevious, "Previous", tint = white, modifier = Modifier.size(42.dp)) }
+                IconButton(vm::previous, Modifier.size(skipSize)) { Icon(Icons.Rounded.SkipPrevious, "Previous", tint = white, modifier = Modifier.size(skipIcon)) }
                 Box(
-                    Modifier.size(78.dp).shadow(20.dp, CircleShape, ambientColor = Accent, spotColor = Accent).clip(CircleShape)
+                    Modifier.size(playSize).shadow(20.dp, CircleShape, ambientColor = Accent, spotColor = Accent).clip(CircleShape)
                         .background(Brush.linearGradient(listOf(Accent.copy(alpha = 0.85f), Accent))).clickable(onClick = vm::togglePlay),
                     contentAlignment = Alignment.Center
-                ) { Icon(if (ui.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, "Play/Pause", tint = white, modifier = Modifier.size(42.dp)) }
-                IconButton(vm::next, Modifier.size(60.dp)) { Icon(Icons.Rounded.SkipNext, "Next", tint = white, modifier = Modifier.size(42.dp)) }
+                ) { Icon(if (ui.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, "Play/Pause", tint = white, modifier = Modifier.size(skipIcon)) }
+                IconButton(vm::next, Modifier.size(skipSize)) { Icon(Icons.Rounded.SkipNext, "Next", tint = white, modifier = Modifier.size(skipIcon)) }
                 ToggleIcon(
                     if (ui.repeat == Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
                     ui.repeat != Player.REPEAT_MODE_OFF, "Repeat", vm::cycleRepeat
@@ -534,7 +565,7 @@ fun NowPlaying(vm: PlayerViewModel, onClose: () -> Unit) {
             }
 
             // Volume
-            Row(Modifier.fillMaxWidth().padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (!tight) Row(Modifier.fillMaxWidth().padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Rounded.VolumeDown, null, tint = white.copy(0.6f), modifier = Modifier.size(20.dp))
                 Slider(
                     value = vol,
@@ -548,10 +579,10 @@ fun NowPlaying(vm: PlayerViewModel, onClose: () -> Unit) {
             }
 
             // Bottom row: lyrics, output device, queue
-            Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().padding(bottom = 6.dp).bleed(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 IconButton({ mode = if (mode == 1) 0 else 1 }) { Icon(Icons.Rounded.FormatQuote, "Lyrics", tint = if (mode == 1) Accent else white.copy(0.7f)) }
                 Row(
-                    Modifier.clip(RoundedCornerShape(20.dp)).background(white.copy(0.10f)).clickable {
+                    Modifier.weight(1f, fill = false).clip(RoundedCornerShape(20.dp)).background(white.copy(0.10f)).clickable {
                         try { ctx.startActivity(Intent(Settings.Panel.ACTION_VOLUME)) }
                         catch (_: Exception) { try { ctx.startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) } catch (_: Exception) { } }
                     }.padding(horizontal = 14.dp, vertical = 8.dp),
@@ -559,9 +590,36 @@ fun NowPlaying(vm: PlayerViewModel, onClose: () -> Unit) {
                 ) {
                     Icon(Icons.Rounded.Headphones, null, tint = white.copy(0.85f), modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text(device, color = white.copy(0.85f), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 180.dp))
+                    Text(device, color = white.copy(0.85f), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 160.dp))
                 }
                 IconButton({ mode = if (mode == 2) 0 else 2 }) { Icon(Icons.Rounded.QueueMusic, "Queue", tint = if (mode == 2) Accent else white.copy(0.7f)) }
+            }
+        }
+
+        if (wide) {
+            Row(
+                Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()
+                    .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal))
+                    .padding(horizontal = 24.dp),
+                horizontalArrangement = Arrangement.spacedBy(32.dp)
+            ) {
+                stage(Modifier.weight(1f).fillMaxHeight())
+                Column(Modifier.weight(1f).fillMaxHeight(), horizontalAlignment = Alignment.CenterHorizontally) {
+                    header()
+                    Spacer(Modifier.weight(1f))
+                    controls()
+                }
+            }
+        } else {
+            Box(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding(), contentAlignment = Alignment.TopCenter) {
+                Column(
+                    Modifier.fillMaxHeight().widthIn(max = 560.dp).fillMaxWidth().padding(horizontal = 24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    header()
+                    stage(Modifier.weight(1f).fillMaxWidth())
+                    controls()
+                }
             }
         }
     }
@@ -572,7 +630,7 @@ fun NowPlaying(vm: PlayerViewModel, onClose: () -> Unit) {
         title = { Text("Add to Playlist") },
         text = {
             if (playlists.isEmpty()) Text("Create a playlist first in the Library tab.")
-            else Column { playlists.keys.sorted().forEach { n -> TextButton({ song?.let { vm.addToPlaylist(n, it.id) }; pick = false }) { Text(n, color = Accent) } } }
+            else Column(Modifier.verticalScroll(rememberScrollState())) { playlists.keys.sorted().forEach { n -> TextButton({ song?.let { vm.addToPlaylist(n, it.id) }; pick = false }) { Text(n, color = Accent) } } }
         }
     )
     if (showSleep) AlertDialog(
@@ -580,7 +638,7 @@ fun NowPlaying(vm: PlayerViewModel, onClose: () -> Unit) {
         confirmButton = { TextButton({ showSleep = false }) { Text("Close") } },
         title = { Text("Sleep timer") },
         text = {
-            Column {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
                 listOf(0 to "Off", 15 to "15 minutes", 30 to "30 minutes", 45 to "45 minutes", 60 to "1 hour").forEach { (m, l) ->
                     TextButton({ vm.setSleep(m); showSleep = false }) { Text(l, color = if (sleep == m) Accent else MaterialTheme.colorScheme.onSurface) }
                 }
@@ -599,7 +657,7 @@ private fun EqDialog(vm: PlayerViewModel, onClose: () -> Unit) {
         confirmButton = { TextButton(onClose) { Text("Done", color = Accent) } },
         title = { Text("Equalizer") },
         text = {
-            Column {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
                 listOf("Flat", "Bass", "Treble", "Vocal", "Rock").forEachIndexed { i, n ->
                     TextButton({ vm.setFx(i, bass) }) { Text(n, color = if (preset == i) Accent else MaterialTheme.colorScheme.onSurface, fontWeight = if (preset == i) FontWeight.Bold else FontWeight.Normal) }
                 }
@@ -687,9 +745,9 @@ fun EqBars(color: Color = Accent) {
 
 private fun LazyListScope.shelf(title: String, list: List<Song>, vm: PlayerViewModel) {
     if (list.isEmpty()) return
-    item { Text(title, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 20.dp, top = 14.dp, bottom = 10.dp)) }
+    item { Text(title, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = Gutter, top = 14.dp, bottom = 10.dp)) }
     item {
-        LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+        LazyRow(contentPadding = PaddingValues(horizontal = Gutter), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             items(list, key = { it.id }) { s ->
                 Column(Modifier.width(140.dp).clickable { vm.play(s, list, title) }) {
                     Art(s, 140.dp, 12.dp, px = 320)
@@ -714,13 +772,12 @@ fun HomeScreen(vm: PlayerViewModel, openSettings: () -> Unit) {
     val added = remember(songs) { songs.sortedByDescending { it.dateAdded }.take(15) }
     LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), contentPadding = PaddingValues(bottom = 16.dp)) {
         item {
-            Row(Modifier.padding(start = 20.dp, top = 16.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Listen Now", fontSize = 30.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            ScreenHeader("Listen Now") {
                 IconButton(openSettings) { Icon(Icons.Rounded.Settings, "Settings", tint = Accent) }
             }
         }
         item {
-            Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(Modifier.padding(horizontal = Gutter, vertical = 14.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 PillButton("Play All", Icons.Rounded.PlayArrow, Modifier.weight(1f)) { vm.playAll(songs, false) }
                 PillButton("Shuffle All", Icons.Rounded.Shuffle, Modifier.weight(1f)) { vm.playAll(songs, true) }
             }
@@ -732,17 +789,43 @@ fun HomeScreen(vm: PlayerViewModel, openSettings: () -> Unit) {
     }
 }
 
-@Composable
-private fun Chip(label: String, selected: Boolean, onClick: () -> Unit) {
-    Box(
-        Modifier.clip(RoundedCornerShape(20.dp)).background(if (selected) Accent else MaterialTheme.colorScheme.surfaceVariant)
-            .clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 9.dp)
-    ) { Text(label, color = if (selected) Color.White else MaterialTheme.colorScheme.onSurface, fontSize = 15.sp) }
-}
+private fun speedLabel(v: Float) = if (v % 1f == 0f) "${v.toInt()}×" else "$v×"
+private val SpeedChoices = listOf(0.75f, 1f, 1.25f, 1.5f, 2f)
 
 @Composable
-private fun SectionLabel(t: String) =
-    Text(t.uppercase(), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 20.dp, top = 22.dp, bottom = 10.dp))
+private fun SectionLabel(t: String, value: String? = null) {
+    Row(
+        Modifier.fillMaxWidth().padding(start = Gutter, end = Gutter, top = 24.dp, bottom = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(t.uppercase(), fontSize = 13.sp, color = sub(), modifier = Modifier.weight(1f))
+        if (value != null) Text(value, fontSize = 13.sp, color = Accent, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+/** Equal-width segmented control: every option gets the same width/height, so labels never wrap or misalign. */
+@Composable
+private fun Segmented(options: List<String>, selected: Int, onSelect: (Int) -> Unit) {
+    Row(
+        Modifier.padding(horizontal = Gutter).fillMaxWidth().clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant).padding(3.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
+        options.forEachIndexed { i, label ->
+            val on = i == selected
+            Box(
+                Modifier.weight(1f).heightIn(min = 40.dp).clip(RoundedCornerShape(10.dp))
+                    .background(if (on) Accent else Color.Transparent).clickable { onSelect(i) },
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    label, color = if (on) Color.White else MaterialTheme.colorScheme.onSurface, fontSize = 14.sp,
+                    fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1, softWrap = false, textAlign = TextAlign.Center
+                )
+            }
+        }
+    }
+}
 
 @Composable
 fun SettingsScreen(vm: PlayerViewModel, onBack: () -> Unit) {
@@ -750,28 +833,35 @@ fun SettingsScreen(vm: PlayerViewModel, onBack: () -> Unit) {
     val acc by vm.accentIdx.collectAsState()
     val speed by vm.speed.collectAsState()
     Column(Modifier.fillMaxSize().statusBarsPadding().verticalScroll(rememberScrollState()).padding(bottom = 24.dp)) {
-        Row(Modifier.padding(start = 6.dp, top = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onBack) { Icon(Icons.Rounded.ArrowBackIosNew, "Back", tint = Accent) }
-            Text("Settings", fontSize = 30.sp, fontWeight = FontWeight.Bold)
-        }
+        ScreenHeader("Settings", onBack)
+
         SectionLabel("Appearance")
-        Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            listOf("System", "Dark", "Light").forEachIndexed { i, n -> Chip(n, theme == i) { vm.setTheme(i) } }
-        }
+        Segmented(listOf("System", "Dark", "Light"), theme) { vm.setTheme(it) }
+
         SectionLabel("Accent colour")
-        Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            AccentChoices.forEachIndexed { i, c ->
-                Box(
-                    Modifier.size(40.dp).clip(CircleShape).background(c).clickable { vm.setAccent(i) },
-                    contentAlignment = Alignment.Center
-                ) { if (acc == i) Icon(Icons.Rounded.Check, null, tint = Color.White) }
+        BoxWithConstraints(Modifier.padding(horizontal = Gutter).fillMaxWidth()) {
+            val gap = 10.dp
+            val d = minOf(40.dp, (maxWidth - gap * (AccentChoices.size - 1)) / AccentChoices.size)
+            Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
+                AccentChoices.forEachIndexed { i, c ->
+                    Box(Modifier.size(d).clip(CircleShape).background(c).clickable { vm.setAccent(i) }, contentAlignment = Alignment.Center) {
+                        if (acc == i) Icon(Icons.Rounded.Check, "Selected", tint = Color.White, modifier = Modifier.size(d / 1.8f))
+                    }
+                }
             }
         }
-        SectionLabel("Playback speed")
-        Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            listOf(0.75f, 1f, 1.25f, 1.5f, 2f).forEach { s -> Chip("${s}x", speed == s) { vm.setSpeed(s) } }
-        }
+
+        SectionLabel("Playback speed", speedLabel(speed))
+        Segmented(SpeedChoices.map(::speedLabel), SpeedChoices.indexOfFirst { kotlin.math.abs(it - speed) < 0.001f }) { vm.setSpeed(SpeedChoices[it]) }
+        Text(
+            "Applies to every song. Pitch stays natural.", fontSize = 13.sp, color = sub(),
+            modifier = Modifier.padding(horizontal = Gutter, vertical = 8.dp)
+        )
+
         SectionLabel("About")
-        Text("Aura Music 2.0\nOffline player. Your music never leaves your phone.", modifier = Modifier.padding(horizontal = 20.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(
+            "Aura Music 2.0\nOffline player. Your music never leaves your phone.",
+            modifier = Modifier.padding(horizontal = Gutter), color = sub()
+        )
     }
 }

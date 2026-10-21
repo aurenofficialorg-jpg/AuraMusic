@@ -55,6 +55,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    @OptIn(ExperimentalLayoutApi::class)
     @Composable
     private fun App() {
         val ui by vm.ui.collectAsState()
@@ -89,31 +90,57 @@ class MainActivity : ComponentActivity() {
         }
 
         val hasTrack = ui.currentId != null
-        Box(Modifier.fillMaxSize()) {
-            Column(Modifier.fillMaxSize()) {
-                Box(Modifier.weight(1f)) {
-                    val d = detail
-                    if (d != null) {
-                        if (d.second == "settings") SettingsScreen(vm) { detail = null }
-                        else DetailScreen(vm, d.first, d.second) { detail = null }
-                    } else when (tab) {
-                        Tab.Home -> HomeScreen(vm) { detail = "Settings" to "settings" }
-                        Tab.Songs -> SongListScreen(vm, "Songs", songs, null, true)
-                        Tab.Albums -> AlbumsScreen(vm) { t, k -> detail = t to k }
-                        Tab.Artists -> ArtistsScreen(vm) { t, k -> detail = t to k }
-                        Tab.Playlists -> PlaylistsScreen(vm) { t, k -> detail = t to k }
-                    }
-                }
-                if (hasTrack) MiniPlayer(vm) { showPlayer = true }
-                NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            // Tablets / landscape: side rail instead of the bottom bar, and content capped to a readable width.
+            val rail = maxWidth >= 840.dp
+            Row(Modifier.fillMaxSize()) {
+                if (rail) NavigationRail(containerColor = MaterialTheme.colorScheme.surface) {
+                    Spacer(Modifier.weight(1f))
                     Tab.values().forEach { t ->
-                        NavigationBarItem(
+                        NavigationRailItem(
                             selected = tab == t, onClick = { tab = t; detail = null },
-                            icon = { Icon(t.icon, t.label) }, label = { Text(t.label, maxLines = 1) },
-                            colors = NavigationBarItemDefaults.colors(
+                            icon = { Icon(t.icon, t.label) }, label = { Text(t.label, maxLines = 1) }, alwaysShowLabel = true,
+                            colors = NavigationRailItemDefaults.colors(
                                 selectedIconColor = Accent, selectedTextColor = Accent, indicatorColor = Accent.copy(alpha = 0.15f)
                             )
                         )
+                    }
+                    Spacer(Modifier.weight(1f))
+                }
+                Column(Modifier.weight(1f).fillMaxHeight()) {
+                    Box(
+                        Modifier.weight(1f).fillMaxWidth()
+                            .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal)),
+                        contentAlignment = Alignment.TopCenter
+                    ) {
+                        Box(Modifier.widthIn(max = 720.dp).fillMaxSize()) {
+                            val d = detail
+                            if (d != null) {
+                                if (d.second == "settings") SettingsScreen(vm) { detail = null }
+                                else DetailScreen(vm, d.first, d.second) { detail = null }
+                            } else when (tab) {
+                                Tab.Home -> HomeScreen(vm) { detail = "Settings" to "settings" }
+                                Tab.Songs -> SongListScreen(vm, "Songs", songs, null, true)
+                                Tab.Albums -> AlbumsScreen(vm) { t, k -> detail = t to k }
+                                Tab.Artists -> ArtistsScreen(vm) { t, k -> detail = t to k }
+                                Tab.Playlists -> PlaylistsScreen(vm) { t, k -> detail = t to k }
+                            }
+                        }
+                    }
+                    if (hasTrack) Box(
+                        Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal)),
+                        contentAlignment = Alignment.TopCenter
+                    ) { Box(Modifier.widthIn(max = 720.dp)) { MiniPlayer(vm) { showPlayer = true } } }
+                    if (!rail) NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+                        Tab.values().forEach { t ->
+                            NavigationBarItem(
+                                selected = tab == t, onClick = { tab = t; detail = null },
+                                icon = { Icon(t.icon, t.label) }, label = { Text(t.label, maxLines = 1) },
+                                colors = NavigationBarItemDefaults.colors(
+                                    selectedIconColor = Accent, selectedTextColor = Accent, indicatorColor = Accent.copy(alpha = 0.15f)
+                                )
+                            )
+                        }
                     }
                 }
             }
