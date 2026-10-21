@@ -37,24 +37,33 @@ object ArtCache {
     }
     private val misses = HashSet<Long>()
 
-    fun get(key: Long): Bitmap? = cache.get(key)
+    private fun key(id: Long, px: Int) = id * 2 + if (px > 400) 1 else 0
+
+    fun get(id: Long, px: Int = 256): Bitmap? = cache.get(key(id, px))
 
     fun load(ctx: Context, song: Song, px: Int): Bitmap? {
-        cache.get(song.id)?.let { return it }
-        if (synchronized(misses) { song.id in misses }) return null
+        val k = key(song.id, px)
+        cache.get(k)?.let { return it }
+        if (synchronized(misses) { k in misses }) return null
         return try {
-            ctx.contentResolver.loadThumbnail(song.uri, Size(px, px), null).also { cache.put(song.id, it) }
+            ctx.contentResolver.loadThumbnail(song.uri, Size(px, px), null).also { cache.put(k, it) }
         } catch (_: Exception) {
-            synchronized(misses) { misses += song.id }
+            synchronized(misses) { misses += k }
             null
         }
+    }
+
+    /** Darkened average colour of the artwork, used for the Now Playing background. */
+    fun tone(b: Bitmap): Color {
+        val c = Color(Bitmap.createScaledBitmap(b, 1, 1, true).getPixel(0, 0))
+        return Color(c.red * 0.55f, c.green * 0.55f, c.blue * 0.55f)
     }
 }
 
 @Composable
 fun Art(song: Song?, size: Dp, corner: Dp, modifier: Modifier = Modifier, px: Int = 256) {
     val ctx = LocalContext.current
-    val bmp by produceState<Bitmap?>(song?.let { ArtCache.get(it.id) }, song?.id) {
+    val bmp by produceState<Bitmap?>(song?.let { ArtCache.get(it.id, px) }, song?.id) {
         if (song != null && value == null) value = withContext(Dispatchers.IO) { ArtCache.load(ctx, song, px) }
     }
     val shape = RoundedCornerShape(corner)

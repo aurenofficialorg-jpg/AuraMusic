@@ -2,18 +2,19 @@ package com.aura.player
 
 import android.app.Application
 import android.content.ComponentName
+import android.os.Bundle
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
+import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.MoreExecutors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 data class PlayerUi(
@@ -22,50 +23,74 @@ data class PlayerUi(
     val shuffle: Boolean = false,
     val repeat: Int = Player.REPEAT_MODE_OFF,
     val durationMs: Long = 0L,
+    val queueIndex: Int = 0,
 )
 
 class PlayerViewModel(app: Application) : AndroidViewModel(app) {
+    private val store = Store(app)
+
     private val _songs = MutableStateFlow<List<Song>>(emptyList())
     val songs: StateFlow<List<Song>> = _songs.asStateFlow()
-
     private val _ui = MutableStateFlow(PlayerUi())
     val ui: StateFlow<PlayerUi> = _ui.asStateFlow()
-
     private val _loaded = MutableStateFlow(false)
     val loaded: StateFlow<Boolean> = _loaded.asStateFlow()
 
-    private var items: List<MediaItem> = emptyList()
+    val favs = MutableStateFlow(store.favs())
+    val recents = MutableStateFlow(store.recents())
+    val playlists = MutableStateFlow(store.playlists())
+    val queue = MutableStateFlow<List<Long>>(emptyList())
+    val sleepMin = MutableStateFlow(0)
+    val preset = MutableStateFlow(store.preset)
+    val bass = MutableStateFlow(store.bass)
+
+    private var byId: Map<Long, Song> = emptyMap()
+    private val itemCache = HashMap<Long, MediaItem>()
     private var controller: MediaController? = null
+    private var lastId: Long? = null
+
+    fun songById(id: Long?): Song? = id?.let { byId[it] }
+    private fun item(s: Song) = itemCache.getOrPut(s.id) { s.toMediaItem() }
 
     private val listener = object : Player.Listener {
-        override fun onEvents(player: Player, events: Player.Events) = sync(player)
+        override fun onEvents(player: Player, events: Player.Events) {
+            if (events.contains(Player.EVENT_TIMELINE_CHANGED)) syncQueue(player)
+            sync(player)
+        }
     }
 
     init {
         val token = SessionToken(app, ComponentName(app, PlaybackService::class.java))
-        val future = MediaController.Builder(app, token).buildAsync()
-        future.addListener({
-            val c = future.get()
+        val f = MediaController.Builder(app, token).buildAsync()
+        f.addListener({
+            val c = f.get()
             controller = c
             c.addListener(listener)
-            sync(c)
+            syncQueue(c); sync(c); sendFx()
         }, MoreExecutors.directExecutor())
     }
 
+    private fun syncQueue(p: Player) {
+        queue.value = List(p.mediaItemCount) { p.getMediaItemAt(it).mediaId.toLongOrNull() ?: -1L }
+    }
+
     private fun sync(p: Player) {
+        val id = p.currentMediaItem?.mediaId?.toLongOrNull()
+        if (id != null && id != lastId) {
+            lastId = id
+            recents.value = (listOf(id) + recents.value.filter { it != id }).take(30)
+            store.saveRecents(recents.value)
+        }
         _ui.value = PlayerUi(
-            currentId = p.currentMediaItem?.mediaId?.toLongOrNull(),
-            isPlaying = p.isPlaying,
-            shuffle = p.shuffleModeEnabled,
-            repeat = p.repeatMode,
-            durationMs = p.duration.coerceAtLeast(0L),
+            id, p.isPlaying, p.shuffleModeEnabled, p.repeatMode,
+            p.duration.coerceAtLeast(0L), p.currentMediaItemIndex
         )
     }
 
     fun loadSongs() {
         viewModelScope.launch(Dispatchers.IO) {
             val list = MusicRepository.load(getApplication<Application>().contentResolver)
-            items = list.map { it.toMediaItem() }
+            byId = list.associateBy { it.id }
             _songs.value = list
             _loaded.value = true
         }
@@ -73,28 +98,30 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
     fun position(): Long = controller?.currentPosition ?: 0L
 
-    fun play(song: Song) {
+    fun play(song: Song, list: List<Song>) {
         val c = controller ?: return
         if (_ui.value.currentId == song.id) { togglePlay(); return }
-        val idx = _songs.value.indexOfFirst { it.id == song.id }
-        if (idx < 0) return
-        c.setMediaItems(items, idx, 0L)
+        c.setMediaItems(list.map { item(it) }, list.indexOf(song).coerceAtLeast(0), 0L)
         c.prepare(); c.play()
     }
 
-    fun playAll(shuffle: Boolean) {
+    fun playAll(list: List<Song>, shuffle: Boolean) {
         val c = controller ?: return
-        if (items.isEmpty()) return
+        if (list.isEmpty()) return
         c.shuffleModeEnabled = shuffle
-        c.setMediaItems(items, if (shuffle) items.indices.random() else 0, 0L)
+        c.setMediaItems(list.map { item(it) }, if (shuffle) list.indices.random() else 0, 0L)
         c.prepare(); c.play()
+    }
+
+    fun playNext(song: Song) {
+        val c = controller ?: return
+        if (c.mediaItemCount == 0) { playAll(listOf(song), false); return }
+        c.addMediaItem(c.currentMediaItemIndex + 1, item(song))
     }
 
     fun togglePlay() { controller?.let { if (it.isPlaying) it.pause() else it.play() } }
     fun next() { controller?.seekToNext() }
-    fun previous() {
-        controller?.let { if (it.currentPosition > 3000) it.seekTo(0) else it.seekToPrevious() }
-    }
+    fun previous() { controller?.let { if (it.currentPosition > 3000) it.seekTo(0) else it.seekToPrevious() } }
     fun seekTo(ms: Long) { controller?.seekTo(ms) }
     fun toggleShuffle() { controller?.let { it.shuffleModeEnabled = !it.shuffleModeEnabled } }
     fun cycleRepeat() {
@@ -106,6 +133,51 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
     }
+
+    // Queue
+    fun jumpTo(i: Int) { controller?.let { it.seekToDefaultPosition(i); it.play() } }
+    fun moveUp(i: Int) { controller?.let { if (i > it.currentMediaItemIndex + 1) it.moveMediaItem(i, i - 1) } }
+    fun removeAt(i: Int) { controller?.removeMediaItem(i) }
+
+    // Favourites & playlists
+    fun toggleFav(id: Long) {
+        favs.value = favs.value.let { if (id in it) it - id else it + id }
+        store.saveFavs(favs.value)
+    }
+    private fun savePl(m: Map<String, List<Long>>) { playlists.value = m; store.savePlaylists(m) }
+    fun createPlaylist(name: String) {
+        val n = name.trim(); if (n.isNotEmpty() && n !in playlists.value) savePl(playlists.value + (n to emptyList()))
+    }
+    fun deletePlaylist(name: String) = savePl(playlists.value - name)
+    fun addToPlaylist(name: String, id: Long) {
+        val l = playlists.value[name] ?: return
+        if (id !in l) savePl(playlists.value + (name to (l + id)))
+    }
+    fun removeFromPlaylist(name: String, id: Long) {
+        val l = playlists.value[name] ?: return
+        savePl(playlists.value + (name to l.filter { it != id }))
+    }
+
+    // Sleep timer & equalizer (run inside the service so they work with the screen off)
+    fun setSleep(min: Int) {
+        sleepMin.value = min
+        controller?.sendCustomCommand(
+            SessionCommand(PlaybackService.CMD_SLEEP, Bundle.EMPTY), Bundle().apply { putInt("min", min) }
+        )
+    }
+    fun setFx(p: Int, b: Int) {
+        preset.value = p; bass.value = b; store.preset = p; store.bass = b; sendFx()
+    }
+    private fun sendFx() {
+        controller?.sendCustomCommand(
+            SessionCommand(PlaybackService.CMD_FX, Bundle.EMPTY),
+            Bundle().apply { putInt("preset", preset.value); putInt("bass", bass.value) }
+        )
+    }
+
+    // Lyrics
+    fun lyrics(id: Long): String? = store.lyrics(id)
+    fun saveLyrics(id: Long, text: String) = store.saveLyrics(id, text)
 
     override fun onCleared() {
         controller?.removeListener(listener)
