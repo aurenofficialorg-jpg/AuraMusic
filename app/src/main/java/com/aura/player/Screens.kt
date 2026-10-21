@@ -403,7 +403,7 @@ private fun ToggleIcon(icon: ImageVector, on: Boolean, desc: String, onClick: ()
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun NowPlaying(vm: PlayerViewModel, onClose: () -> Unit) {
     val ctx = LocalContext.current
