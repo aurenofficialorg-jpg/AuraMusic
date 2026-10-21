@@ -58,6 +58,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
@@ -196,16 +197,25 @@ fun AuraSlider(
     val thumbPx = with(density) { thumbSize.toPx() }
     val r = thumbPx / 2f
     val travel = (w - thumbPx).coerceAtLeast(1f)
-    fun map(x: Float) = ((x - r) / travel).coerceIn(0f, 1f)
+    // The gesture handlers below live for the whole composition (pointerInput(Unit)), so they must read the
+    // *current* width and callbacks, not the values captured on first composition (width was still 0 then,
+    // which made every touch map to 100% and skipped the song).
+    val widthState = rememberUpdatedState(w)
+    val onChange = rememberUpdatedState(onValueChange)
+    val onFinish = rememberUpdatedState(onValueChangeFinished)
+    fun map(x: Float): Float {
+        val t = (widthState.value - thumbPx).coerceAtLeast(1f)
+        return ((x - r) / t).coerceIn(0f, 1f)
+    }
     Box(
         modifier.fillMaxWidth().height(40.dp).onSizeChanged { w = it.width }
-            .pointerInput(Unit) { detectTapGestures { o -> onValueChange(map(o.x)); onValueChangeFinished() } }
+            .pointerInput(Unit) { detectTapGestures { o -> onChange.value(map(o.x)); onFinish.value() } }
             .pointerInput(Unit) {
                 detectHorizontalDragGestures(
-                    onDragStart = { o -> dragging = true; onValueChange(map(o.x)) },
-                    onDragEnd = { dragging = false; onValueChangeFinished() },
-                    onDragCancel = { dragging = false; onValueChangeFinished() }
-                ) { change, _ -> change.consume(); onValueChange(map(change.position.x)) }
+                    onDragStart = { o -> dragging = true; onChange.value(map(o.x)) },
+                    onDragEnd = { dragging = false; onFinish.value() },
+                    onDragCancel = { dragging = false; onFinish.value() }
+                ) { change, _ -> change.consume(); onChange.value(map(change.position.x)) }
             },
         contentAlignment = Alignment.CenterStart
     ) {

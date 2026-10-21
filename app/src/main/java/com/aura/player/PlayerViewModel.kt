@@ -54,6 +54,13 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     val accentIdx = MutableStateFlow(store.accentIdx)
     val speed = MutableStateFlow(store.speed)
     val source = MutableStateFlow("Library")
+    val xfade = MutableStateFlow(store.xfade)
+    val loud = MutableStateFlow(store.loud)
+    val shake = MutableStateFlow(store.shake)
+    val hpResume = MutableStateFlow(store.hpResume)
+    val tod = MutableStateFlow(store.tod())
+    val abStart = MutableStateFlow(-1L)
+    val abEnd = MutableStateFlow(-1L)
 
     private var byId: Map<Long, Song> = emptyMap()
     private val itemCache = HashMap<Long, MediaItem>()
@@ -93,7 +100,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             val c = f.get()
             controller = c
             c.addListener(listener)
-            syncQueue(c); sync(c); sendFx(); c.setPlaybackSpeed(speed.value)
+            syncQueue(c); sync(c); sendFx(); sendPrefs(); c.setPlaybackSpeed(speed.value)
         }, MoreExecutors.directExecutor())
     }
 
@@ -109,6 +116,11 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             store.saveRecents(recents.value)
             counts.value = counts.value + (id to ((counts.value[id] ?: 0) + 1))
             store.saveCounts(counts.value)
+            val b = timeBucket()
+            val cur = tod.value[id] ?: List(4) { 0 }
+            tod.value = tod.value + (id to cur.mapIndexed { i, v -> if (i == b) v + 1 else v })
+            store.saveTod(tod.value)
+            abStart.value = -1L; abEnd.value = -1L
         }
         _ui.value = PlayerUi(
             id, p.isPlaying, p.shuffleModeEnabled, p.repeatMode,
@@ -204,6 +216,36 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         controller?.sendCustomCommand(
             SessionCommand(PlaybackService.CMD_FX, Bundle.EMPTY),
             Bundle().apply { putInt("preset", preset.value); putInt("bass", bass.value) }
+        )
+    }
+
+    // Premium playback options: all of these run inside the service so they work with the screen off.
+    private fun sendPrefs() {
+        controller?.sendCustomCommand(
+            SessionCommand(PlaybackService.CMD_PREFS, Bundle.EMPTY),
+            Bundle().apply {
+                putInt("xfade", xfade.value); putInt("loud", loud.value)
+                putBoolean("shake", shake.value); putBoolean("hp", hpResume.value)
+            }
+        )
+    }
+    fun setXfade(sec: Int) { xfade.value = sec; store.xfade = sec; sendPrefs() }
+    fun setLoud(mb: Int) { loud.value = mb; store.loud = mb; sendPrefs() }
+    fun setShake(on: Boolean) { shake.value = on; store.shake = on; sendPrefs() }
+    fun setHpResume(on: Boolean) { hpResume.value = on; store.hpResume = on; sendPrefs() }
+
+    /** A-B repeat: first call marks A, second marks B (loop starts), third clears it. */
+    fun abCycle() {
+        val c = controller ?: return
+        val pos = c.currentPosition
+        when {
+            abStart.value < 0 -> abStart.value = pos
+            abEnd.value < 0 -> if (pos > abStart.value + 1000) abEnd.value = pos else abStart.value = pos
+            else -> { abStart.value = -1L; abEnd.value = -1L }
+        }
+        c.sendCustomCommand(
+            SessionCommand(PlaybackService.CMD_AB, Bundle.EMPTY),
+            Bundle().apply { putLong("a", abStart.value); putLong("b", abEnd.value) }
         )
     }
 

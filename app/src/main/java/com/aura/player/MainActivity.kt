@@ -151,7 +151,7 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                             ) { (t, d) ->
-                                MotionBlurBox(10.dp) {
+                                MotionBlurBox(4.dp) {
                                     if (d != null) {
                                         if (d.second == "settings") SettingsScreen(vm) { detail = null }
                                         else DetailScreen(vm, d.first, d.second) { detail = null }
@@ -211,7 +211,7 @@ class MainActivity : ComponentActivity() {
                 enter = slideInVertically(tween(520, easing = FastOutSlowInEasing)) { it } + fadeIn(tween(300)),
                 exit = slideOutVertically(tween(420, easing = FastOutSlowInEasing)) { it } + fadeOut(tween(300))
             ) {
-                MotionBlurBox(18.dp) { NowPlaying(vm) { showPlayer = false } }
+                MotionBlurBox(8.dp) { NowPlaying(vm) { showPlayer = false } }
             }
         }
         BackHandler(enabled = showPlayer) { showPlayer = false }

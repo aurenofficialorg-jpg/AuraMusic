@@ -27,9 +27,7 @@ data class Song(
                 .setTitle(title)
                 .setArtist(artist)
                 .setAlbumTitle(album)
-                .setArtworkUri(
-                    ContentUris.withAppendedId(Uri.parse("content://media/external/audio/albumart"), albumId)
-                )
+                .setArtworkUri(Uri.parse("content://media/external/audio/media/$id?albumId=$albumId"))
                 .build()
         ).build()
 }

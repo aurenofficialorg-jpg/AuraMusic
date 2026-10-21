@@ -6,7 +6,9 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.IntentFilter
 import android.content.Intent
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
@@ -158,6 +160,7 @@ fun SongListScreen(
     var pickFor by remember { mutableStateOf<Song?>(null) }
     var sort by remember { mutableIntStateOf(0) }
     var sortMenu by remember { mutableStateOf(false) }
+    var menuSong by remember { mutableStateOf<Song?>(null) }
     val shown = remember(songs, query, sort) {
         val f = if (query.isBlank()) songs else songs.filter {
             it.title.contains(query, true) || it.artist.contains(query, true) || it.album.contains(query, true)
@@ -170,17 +173,11 @@ fun SongListScreen(
         }
     }
 
+    Box(Modifier.fillMaxSize()) {
     LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), contentPadding = PaddingValues(bottom = 16.dp)) {
         item {
             ScreenHeader(title, onBack) {
-                if (searchable) Box {
-                    IconButton({ sortMenu = true }) { Icon(Icons.Rounded.SwapVert, "Sort", tint = Accent) }
-                    DropdownMenu(sortMenu, { sortMenu = false }) {
-                        listOf("Title", "Artist", "Recently Added", "Longest").forEachIndexed { i, n ->
-                            DropdownMenuItem({ Text(n, color = if (sort == i) Accent else Color.Unspecified) }, { sort = i; sortMenu = false })
-                        }
-                    }
-                }
+                if (searchable) IconButton({ sortMenu = true }) { Icon(Icons.Rounded.SwapVert, "Sort", tint = Accent) }
                 headerAction()
             }
         }
@@ -211,7 +208,6 @@ fun SongListScreen(
         if (songs.isEmpty()) item { Text("Nothing here yet.", color = sub(), modifier = Modifier.padding(horizontal = Gutter, vertical = 24.dp)) }
         items(shown, key = { it.id }, contentType = { 0 }) { song ->
             val active = ui.currentId == song.id
-            var menu by remember { mutableStateOf(false) }
             Row(
                 Modifier.animateItemPlacement().fillMaxWidth().bouncyClick(0.98f) { vm.play(song, shown, title) }.padding(start = Gutter, end = 8.dp, top = 6.dp, bottom = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -223,40 +219,40 @@ fun SongListScreen(
                     Text(song.artist, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 14.sp, color = sub())
                 }
                 if (active && ui.isPlaying) EqBars()
-                Box {
-                    IconButton(onClick = { menu = true }) { Icon(Icons.Rounded.MoreHoriz, "More", tint = sub()) }
-                    DropdownMenu(menu, { menu = false }) {
-                        DropdownMenuItem({ Text("Play next") }, { vm.playNext(song); menu = false }, leadingIcon = { Icon(Icons.Rounded.QueueMusic, null) })
-                        DropdownMenuItem(
-                            { Text(if (song.id in favs) "Remove from Favourites" else "Add to Favourites") },
-                            { vm.toggleFav(song.id); menu = false },
-                            leadingIcon = { Icon(if (song.id in favs) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, null) }
-                        )
-                        DropdownMenuItem({ Text("Add to Playlist") }, { pickFor = song; menu = false }, leadingIcon = { Icon(Icons.Rounded.PlaylistAdd, null) })
-                        DropdownMenuItem({ Text("Share") }, {
-                            menu = false
-                            val i = Intent(Intent.ACTION_SEND).apply {
-                                type = "audio/*"; putExtra(Intent.EXTRA_STREAM, song.uri); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                            }
-                            ctx.startActivity(Intent.createChooser(i, null))
-                        }, leadingIcon = { Icon(Icons.Rounded.Share, null) })
-                        if (inPlaylist != null) DropdownMenuItem({ Text("Remove from this Playlist") }, { vm.removeFromPlaylist(inPlaylist, song.id); menu = false }, leadingIcon = { Icon(Icons.Rounded.Delete, null) })
-                    }
-                }
+                IconButton(onClick = { menuSong = song }) { Icon(Icons.Rounded.MoreHoriz, "More", tint = sub()) }
             }
         }
     }
-
-    pickFor?.let { s ->
-        AlertDialog(
-            onDismissRequest = { pickFor = null },
-            confirmButton = { TextButton({ pickFor = null }) { Text("Cancel") } },
-            title = { Text("Add to Playlist") },
-            text = {
-                if (playlists.isEmpty()) Text("Create a playlist first in the Playlists tab.")
-                else Column(Modifier.verticalScroll(rememberScrollState())) { playlists.keys.sorted().forEach { n -> TextButton({ vm.addToPlaylist(n, s.id); pickFor = null }) { Text(n, color = Accent) } } }
-            }
-        )
+    val ms = menuSong
+    AuraMenu(
+        visible = ms != null, onDismiss = { menuSong = null }, title = ms?.title,
+        actions = if (ms == null) emptyList() else buildList {
+            add(MenuAction("Play next", Icons.Rounded.QueueMusic) { vm.playNext(ms) })
+            add(MenuAction(if (ms.id in favs) "Remove from Favourites" else "Add to Favourites",
+                if (ms.id in favs) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder) { vm.toggleFav(ms.id) })
+            add(MenuAction("Add to Playlist", Icons.Rounded.PlaylistAdd) { pickFor = ms })
+            add(MenuAction("Share", Icons.Rounded.Share) {
+                val i = Intent(Intent.ACTION_SEND).apply {
+                    type = "audio/*"; putExtra(Intent.EXTRA_STREAM, ms.uri); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                ctx.startActivity(Intent.createChooser(i, null))
+            })
+            if (inPlaylist != null) add(MenuAction("Remove from this Playlist", Icons.Rounded.Delete) { vm.removeFromPlaylist(inPlaylist, ms.id) })
+        }
+    )
+    AuraMenu(
+        visible = sortMenu, onDismiss = { sortMenu = false }, title = "Sort by",
+        actions = listOf("Title", "Artist", "Recently Added", "Longest").mapIndexed { i, n ->
+            MenuAction(n, Icons.Rounded.SwapVert, selected = sort == i) { sort = i }
+        }
+    )
+    val pf = pickFor
+    AuraMenu(
+        visible = pf != null, onDismiss = { pickFor = null }, title = "Add to playlist",
+        actions = if (pf == null) emptyList() else if (playlists.isEmpty())
+            listOf(MenuAction("Create a playlist first in Library", Icons.Rounded.PlaylistAdd) { })
+        else playlists.keys.sorted().map { n -> MenuAction(n, Icons.Rounded.QueueMusic) { vm.addToPlaylist(n, pf.id) } }
+    )
     }
 }
 
@@ -450,6 +446,16 @@ fun NowPlaying(vm: PlayerViewModel, onClose: () -> Unit) {
     var vol by remember { mutableFloatStateOf(am.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / maxVol) }
     var volDrag by remember { mutableStateOf(false) }
     var device by remember { mutableStateOf("This Phone") }
+    // Follow the hardware volume buttons instantly (the system broadcasts every change), plus a slow poll as backup.
+    DisposableEffect(Unit) {
+        val rx = object : BroadcastReceiver() {
+            override fun onReceive(c: Context?, i: Intent?) {
+                if (!volDrag) vol = am.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / maxVol
+            }
+        }
+        ctx.registerReceiver(rx, IntentFilter("android.media.VOLUME_CHANGED_ACTION"))
+        onDispose { runCatching { ctx.unregisterReceiver(rx) } }
+    }
     LaunchedEffect(Unit) {
         while (isActive) {
             if (!volDrag) vol = am.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / maxVol
@@ -475,6 +481,8 @@ fun NowPlaying(vm: PlayerViewModel, onClose: () -> Unit) {
     val bg by animateColorAsState(tint, tween(600), label = "bg")
     val artScale by animateFloatAsState(if (ui.isPlaying) 1f else 0.86f, label = "art")
     val dur = ui.durationMs.coerceAtLeast(1L)
+    val abS by vm.abStart.collectAsState()
+    val abE by vm.abEnd.collectAsState()
     var dragY by remember { mutableFloatStateOf(0f) }
     val white = Color.White
 
@@ -512,22 +520,7 @@ fun NowPlaying(vm: PlayerViewModel, onClose: () -> Unit) {
                     Text("PLAYING FROM", color = white.copy(0.6f), fontSize = 10.sp, letterSpacing = 1.2.sp)
                     Text(source, color = white, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                Box {
-                    IconButton({ menu = true }) { Icon(Icons.Rounded.MoreHoriz, "More", tint = white) }
-                    DropdownMenu(menu, { menu = false }) {
-                        DropdownMenuItem({ Text("Sleep timer") }, { menu = false; showSleep = true }, leadingIcon = { Icon(Icons.Rounded.Timer, null) })
-                        DropdownMenuItem({ Text("Equalizer") }, { menu = false; showEq = true }, leadingIcon = { Icon(Icons.Rounded.Tune, null) })
-                        DropdownMenuItem({ Text("Share") }, {
-                            menu = false
-                            song?.let { s ->
-                                val i = Intent(Intent.ACTION_SEND).apply {
-                                    type = "audio/*"; putExtra(Intent.EXTRA_STREAM, s.uri); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                }
-                                ctx.startActivity(Intent.createChooser(i, null))
-                            }
-                        }, leadingIcon = { Icon(Icons.Rounded.Share, null) })
-                    }
-                }
+                IconButton({ menu = true }) { Icon(Icons.Rounded.MoreHoriz, "More", tint = white) }
             }
         }
 
@@ -609,7 +602,11 @@ fun NowPlaying(vm: PlayerViewModel, onClose: () -> Unit) {
                 AuraSlider(
                     value = vol,
                     onValueChange = { vol = it; volDrag = true; am.setStreamVolume(AudioManager.STREAM_MUSIC, (it * maxVol).roundToInt(), 0) },
-                    onValueChangeFinished = { volDrag = false },
+                    onValueChangeFinished = {
+                        am.setStreamVolume(AudioManager.STREAM_MUSIC, (vol * maxVol).roundToInt(), 0)
+                        vol = am.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / maxVol
+                        volDrag = false
+                    },
                     activeColor = white, inactiveColor = white.copy(0.2f),
                     modifier = Modifier.weight(1f).padding(horizontal = 8.dp), thumbSize = 12.dp
                 )
@@ -660,6 +657,25 @@ fun NowPlaying(vm: PlayerViewModel, onClose: () -> Unit) {
                 }
             }
         }
+        AuraMenu(
+            visible = menu, onDismiss = { menu = false }, dark = true, edgeToEdge = true,
+            actions = listOf(
+                MenuAction("Sleep timer", Icons.Rounded.Timer) { showSleep = true },
+                MenuAction("Equalizer", Icons.Rounded.Tune) { showEq = true },
+                MenuAction(
+                    when { abS < 0 -> "A-B repeat · mark start (A)"; abE < 0 -> "A-B repeat · mark end (B)"; else -> "Stop A-B repeat" },
+                    Icons.Rounded.Repeat, selected = abS >= 0
+                ) { vm.abCycle() },
+                MenuAction("Share", Icons.Rounded.Share) {
+                    song?.let { s ->
+                        val i = Intent(Intent.ACTION_SEND).apply {
+                            type = "audio/*"; putExtra(Intent.EXTRA_STREAM, s.uri); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }
+                        ctx.startActivity(Intent.createChooser(i, null))
+                    }
+                }
+            )
+        )
     }
 
     if (pick) AlertDialog(
@@ -846,6 +862,29 @@ fun HomeScreen(vm: PlayerViewModel, openSettings: () -> Unit) {
     val top = remember(counts, songs) { counts.entries.sortedByDescending { it.value }.mapNotNull { vm.songById(it.key) }.take(15) }
     val fav = remember(favs, songs) { songs.filter { it.id in favs }.take(15) }
     val added = remember(songs) { songs.sortedByDescending { it.dateAdded }.take(15) }
+    // Smart mixes, built on-device from your own listening habits (no account, no internet).
+    val forgotten = remember(favs, recents, songs) {
+        val fresh = recents.take(30).toSet()
+        songs.filter { it.id in favs && it.id !in fresh }.shuffled().take(15)
+    }
+    val discover = remember(songs, counts.isEmpty()) { songs.filter { (counts[it.id] ?: 0) == 0 }.shuffled().take(15) }
+    val quick = remember(songs, counts) {
+        songs.filter { it.durationMs in 1..180_000L }.sortedByDescending { counts[it.id] ?: 0 }.take(15)
+    }
+    val tod by vm.tod.collectAsState()
+    val bucket = remember { timeBucket() }
+    val todMix = remember(tod, songs) {
+        tod.entries.filter { (it.value.getOrNull(bucket) ?: 0) > 0 }
+            .sortedByDescending { it.value[bucket] }.mapNotNull { vm.songById(it.key) }.take(15)
+    }
+    val plays = remember(counts) { counts.values.sum() }
+    val listenedMs = remember(counts, songs) { counts.entries.sumOf { (vm.songById(it.key)?.durationMs ?: 0L) * it.value } }
+    val topArtist = remember(counts, songs) {
+        counts.entries.mapNotNull { e -> vm.songById(e.key)?.let { it.artist to e.value } }
+            .groupBy({ it.first }, { it.second }).mapValues { it.value.sum() }
+            .filterKeys { it.isNotBlank() && !it.contains("unknown", true) }
+            .maxByOrNull { it.value }?.key
+    }
     LazyColumn(Modifier.fillMaxSize().statusBarsPadding(), contentPadding = PaddingValues(bottom = 16.dp)) {
         item {
             ScreenHeader("Listen Now") {
@@ -858,10 +897,47 @@ fun HomeScreen(vm: PlayerViewModel, openSettings: () -> Unit) {
                 PillButton("Shuffle All", Icons.Rounded.Shuffle, Modifier.weight(1f)) { vm.playAll(songs, true) }
             }
         }
+        if (plays > 0) item {
+            val mins = listenedMs / 60_000L
+            Row(
+                Modifier.padding(horizontal = Gutter).fillMaxWidth().glass(RoundedCornerShape(18.dp)).padding(vertical = 14.dp, horizontal = 8.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                StatCell(plays.toString(), "plays")
+                StatCell(if (mins >= 60) "${mins / 60}h ${mins % 60}m" else "${mins}m", "listened")
+                if (topArtist != null) StatCell(topArtist, "top artist", Modifier.weight(1f, fill = false))
+            }
+        }
         shelf("Recently Played", recent, vm)
+        shelf("Your ${BucketNames[bucket]} Mix", todMix, vm)
+        shelf("Forgotten Favourites", forgotten, vm)
         shelf("Most Played", top, vm)
+        shelf("Discover · never played", discover, vm)
+        shelf("Quick Hits · under 3 min", quick, vm)
         shelf("Favourites", fav, vm)
         shelf("Recently Added", added, vm)
+    }
+}
+
+@Composable
+private fun ToggleRow(title: String, desc: String, on: Boolean, onChange: (Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = Gutter, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f).padding(end = 12.dp)) {
+            Text(title, fontSize = 16.sp)
+            Text(desc, fontSize = 13.sp, color = sub())
+        }
+        Switch(
+            on, onChange,
+            colors = SwitchDefaults.colors(checkedTrackColor = Accent, checkedThumbColor = Color.White)
+        )
+    }
+}
+
+@Composable
+private fun StatCell(value: String, label: String, modifier: Modifier = Modifier) {
+    Column(modifier.padding(horizontal = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(value, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Accent, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(label, fontSize = 12.sp, color = sub(), maxLines = 1)
     }
 }
 
@@ -939,6 +1015,30 @@ fun SettingsScreen(vm: PlayerViewModel, onBack: () -> Unit) {
             "Applies to every song. Pitch stays natural.", fontSize = 13.sp, color = sub(),
             modifier = Modifier.padding(horizontal = Gutter, vertical = 8.dp)
         )
+
+        val xfade by vm.xfade.collectAsState()
+        val loud by vm.loud.collectAsState()
+        val shake by vm.shake.collectAsState()
+        val hp by vm.hpResume.collectAsState()
+        val fades = listOf(0, 3, 6, 9)
+        SectionLabel("Fade between songs", if (xfade == 0) "Off" else "${xfade}s")
+        Segmented(listOf("Off", "3s", "6s", "9s"), fades.indexOf(xfade)) { vm.setXfade(fades[it]) }
+        Text(
+            "Each song fades out at the end and the next fades in.", fontSize = 13.sp, color = sub(),
+            modifier = Modifier.padding(horizontal = Gutter, vertical = 8.dp)
+        )
+
+        var l by remember(loud) { mutableFloatStateOf(loud / 600f) }
+        SectionLabel("Loudness boost", if (loud == 0) "Off" else "+${loud / 100} dB")
+        AuraSlider(
+            value = l, onValueChange = { l = it }, onValueChangeFinished = { vm.setLoud((l * 6).roundToInt() * 100) },
+            activeColor = Accent, inactiveColor = MaterialTheme.colorScheme.onSurface.copy(0.2f),
+            modifier = Modifier.padding(horizontal = Gutter)
+        )
+
+        SectionLabel("Controls")
+        ToggleRow("Shake to skip", "Shake your phone firmly to play the next song", shake) { vm.setShake(it) }
+        ToggleRow("Resume on headphones", "Continue playing when you reconnect headphones after unplugging", hp) { vm.setHpResume(it) }
 
         SectionLabel("About")
         Text(

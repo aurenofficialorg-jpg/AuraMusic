@@ -56,6 +56,37 @@ class Store(ctx: Context) {
         get() = sp.getFloat("speed", 1f)
         set(v) = sp.edit().putFloat("speed", v).apply()
 
+    var xfade: Int
+        get() = sp.getInt("xfade", 0)
+        set(v) = sp.edit().putInt("xfade", v).apply()
+    var loud: Int
+        get() = sp.getInt("loud", 0)
+        set(v) = sp.edit().putInt("loud", v).apply()
+    var shake: Boolean
+        get() = sp.getBoolean("shake", false)
+        set(v) = sp.edit().putBoolean("shake", v).apply()
+    var hpResume: Boolean
+        get() = sp.getBoolean("hpResume", false)
+        set(v) = sp.edit().putBoolean("hpResume", v).apply()
+
+    /** Plays per time-of-day bucket (night / morning / afternoon / evening) for each song. */
+    fun tod(): Map<Long, List<Int>> {
+        val o = JSONObject(sp.getString("tod", "{}") ?: "{}")
+        return o.keys().asSequence().associate { k ->
+            val a = o.getJSONArray(k); k.toLong() to List(4) { i -> a.optInt(i, 0) }
+        }
+    }
+    fun saveTod(m: Map<Long, List<Int>>) {
+        val o = JSONObject(); m.forEach { (k, v) -> o.put(k.toString(), JSONArray(v)) }
+        sp.edit().putString("tod", o.toString()).apply()
+    }
+
     fun lyrics(id: Long): String? = File(dir, "$id.lrc").takeIf { it.exists() }?.readText()
     fun saveLyrics(id: Long, text: String) = File(dir, "$id.lrc").writeText(text)
 }
+
+/** 0 = late night, 1 = morning, 2 = afternoon, 3 = evening. */
+fun timeBucket(): Int = when (java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)) {
+    in 0..5 -> 0; in 6..11 -> 1; in 12..17 -> 2; else -> 3
+}
+val BucketNames = listOf("Late Night", "Morning", "Afternoon", "Evening")
