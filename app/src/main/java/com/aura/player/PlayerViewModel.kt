@@ -2,7 +2,13 @@ package com.aura.player
 
 import android.app.Application
 import android.content.ComponentName
+import android.database.ContentObserver
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.provider.MediaStore
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.media3.common.MediaItem
@@ -65,7 +71,21 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // Live library: any change in MediaStore (new download, deleted file, re-tag) refreshes the lists automatically.
+    private var reloadJob: Job? = null
+    private val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
+        override fun onChange(selfChange: Boolean) = refresh()
+    }
+
+    /** Debounced reload; safe to call often (e.g. from onResume). */
+    fun refresh() {
+        if (!_loaded.value) return
+        reloadJob?.cancel()
+        reloadJob = viewModelScope.launch { delay(700); loadSongs() }
+    }
+
     init {
+        app.contentResolver.registerContentObserver(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, true, observer)
         Accent = AccentChoices[store.accentIdx.coerceIn(0, AccentChoices.lastIndex)]
         val token = SessionToken(app, ComponentName(app, PlaybackService::class.java))
         val f = MediaController.Builder(app, token).buildAsync()
@@ -102,6 +122,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             byId = list.associateBy { it.id }
             _songs.value = list
             _loaded.value = true
+            ArtCache.clearMisses()
         }
     }
 
@@ -195,6 +216,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     fun saveLyrics(id: Long, text: String) = store.saveLyrics(id, text)
 
     override fun onCleared() {
+        getApplication<Application>().contentResolver.unregisterContentObserver(observer)
         controller?.removeListener(listener)
         controller?.release()
         super.onCleared()

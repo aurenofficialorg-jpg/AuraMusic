@@ -13,6 +13,26 @@ import android.media.AudioManager
 import android.provider.Settings
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.EnterExitState
+import androidx.compose.animation.ExperimentalAnimationApi
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateDp
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import kotlin.math.roundToInt
 import android.graphics.Bitmap
@@ -111,7 +131,7 @@ fun ScreenHeader(title: String, onBack: (() -> Unit)? = null, actions: @Composab
 @Composable
 fun ListRow(song: Song?, title: String, subtitle: String, onClick: () -> Unit, trailing: @Composable () -> Unit = {}) {
     Row(
-        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = Gutter, vertical = 6.dp),
+        Modifier.fillMaxWidth().bouncyClick(0.98f, onClick).padding(horizontal = Gutter, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Art(song, 52.dp, 8.dp)
@@ -124,6 +144,7 @@ fun ListRow(song: Song?, title: String, subtitle: String, onClick: () -> Unit, t
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun SongListScreen(
     vm: PlayerViewModel, title: String, songs: List<Song>, onBack: (() -> Unit)?,
@@ -165,8 +186,7 @@ fun SongListScreen(
         }
         if (searchable) item {
             Box(
-                Modifier.padding(horizontal = Gutter).fillMaxWidth().heightIn(min = 40.dp).clip(RoundedCornerShape(12.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.CenterStart
+                Modifier.padding(horizontal = Gutter).fillMaxWidth().heightIn(min = 40.dp).glass(RoundedCornerShape(14.dp)), contentAlignment = Alignment.CenterStart
             ) {
                 Row(Modifier.padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Rounded.Search, null, tint = sub(), modifier = Modifier.size(20.dp))
@@ -193,7 +213,7 @@ fun SongListScreen(
             val active = ui.currentId == song.id
             var menu by remember { mutableStateOf(false) }
             Row(
-                Modifier.fillMaxWidth().clickable { vm.play(song, shown, title) }.padding(start = Gutter, end = 8.dp, top = 6.dp, bottom = 6.dp),
+                Modifier.animateItemPlacement().fillMaxWidth().bouncyClick(0.98f) { vm.play(song, shown, title) }.padding(start = Gutter, end = 8.dp, top = 6.dp, bottom = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Art(song, 52.dp, 8.dp)
@@ -243,7 +263,7 @@ fun SongListScreen(
 @Composable
 private fun PillButton(label: String, icon: ImageVector, modifier: Modifier, onClick: () -> Unit) {
     Row(
-        modifier.heightIn(min = 46.dp).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant).clickable(onClick = onClick),
+        modifier.bouncyClick(onClick = onClick).heightIn(min = 46.dp).glass(RoundedCornerShape(14.dp)),
         horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(icon, null, tint = Accent); Spacer(Modifier.width(6.dp))
@@ -305,8 +325,8 @@ fun PlaylistsScreen(vm: PlayerViewModel, open: (String, String) -> Unit) {
 
 @Composable
 private fun SimpleRow(icon: ImageVector, title: String, subtitle: String, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = Gutter, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(52.dp).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
+    Row(Modifier.fillMaxWidth().bouncyClick(0.98f, onClick).padding(horizontal = Gutter, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(52.dp).glass(RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) {
             Icon(icon, null, tint = Accent)
         }
         Spacer(Modifier.width(14.dp))
@@ -347,8 +367,8 @@ fun MiniPlayer(vm: PlayerViewModel, onOpen: () -> Unit) {
     val song = remember(songs, ui.currentId) { vm.songById(ui.currentId) } ?: return
     var dx by remember { mutableFloatStateOf(0f) }
     Row(
-        Modifier.padding(horizontal = 12.dp, vertical = 6.dp).fillMaxWidth().height(62.dp).clip(RoundedCornerShape(16.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant).clickable(onClick = onOpen)
+        Modifier.padding(horizontal = 12.dp, vertical = 6.dp).fillMaxWidth().height(62.dp).bouncyClick(0.98f, onOpen)
+            .glass(RoundedCornerShape(20.dp))
             .pointerInput(Unit) {
                 detectHorizontalDragGestures(
                     onDragEnd = { if (dx < -90) vm.next() else if (dx > 90) vm.previous(); dx = 0f },
@@ -360,7 +380,7 @@ fun MiniPlayer(vm: PlayerViewModel, onOpen: () -> Unit) {
         Art(song, 46.dp, 8.dp)
         Spacer(Modifier.width(12.dp))
         Text(song.title, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 16.sp, fontWeight = FontWeight.Medium)
-        IconButton(onClick = vm::togglePlay) { Icon(if (ui.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, "Play/Pause", modifier = Modifier.size(32.dp)) }
+        IconButton(onClick = vm::togglePlay) { PlayPauseIcon(ui.isPlaying, 32.dp, MaterialTheme.colorScheme.onSurface) }
         IconButton(onClick = vm::next) { Icon(Icons.Rounded.SkipNext, "Next", modifier = Modifier.size(32.dp)) }
     }
 }
@@ -390,7 +410,7 @@ private fun outputName(am: AudioManager): String {
 
 @Composable
 private fun Badge(label: String) {
-    Box(Modifier.clip(RoundedCornerShape(6.dp)).background(Color.White.copy(0.12f)).padding(horizontal = 8.dp, vertical = 3.dp)) {
+    Box(Modifier.glass(RoundedCornerShape(8.dp), true).padding(horizontal = 8.dp, vertical = 3.dp)) {
         Text(label, color = Color.White.copy(0.85f), fontSize = 10.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.8.sp)
     }
 }
@@ -403,7 +423,7 @@ private fun ToggleIcon(icon: ImageVector, on: Boolean, desc: String, onClick: ()
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class, ExperimentalAnimationApi::class)
 @Composable
 fun NowPlaying(vm: PlayerViewModel, onClose: () -> Unit) {
     val ctx = LocalContext.current
@@ -438,18 +458,21 @@ fun NowPlaying(vm: PlayerViewModel, onClose: () -> Unit) {
         }
     }
 
-    LaunchedEffect(ui.isPlaying, ui.currentId) {
-        pos = vm.position()
-        while (isActive && ui.isPlaying) { if (!dragging) pos = vm.position(); delay(400) }
+    // Only the lyrics pane needs a position in NowPlaying; the progress bar has its own isolated state below.
+    LaunchedEffect(ui.isPlaying, ui.currentId, mode) {
+        if (mode == 1) {
+            pos = vm.position()
+            while (isActive && ui.isPlaying) { pos = vm.position(); delay(300) }
+        }
     }
 
-    val bmp by produceState<Bitmap?>(null, song?.id) {
+    val artVer = ArtCache.version
+    val bmp by produceState<Bitmap?>(null, song?.id, artVer) {
         val s = song
         value = if (s == null) null else withContext(Dispatchers.IO) { ArtCache.load(ctx, s, 512) }
     }
     val tint = remember(bmp) { bmp?.let { ArtCache.tone(it) } ?: Color(0xFF3A2A30) }
     val bg by animateColorAsState(tint, tween(600), label = "bg")
-    val glow = lerp(bg, Accent, 0.30f)
     val artScale by animateFloatAsState(if (ui.isPlaying) 1f else 0.86f, label = "art")
     val dur = ui.durationMs.coerceAtLeast(1L)
     var dragY by remember { mutableFloatStateOf(0f) }
@@ -468,7 +491,19 @@ fun NowPlaying(vm: PlayerViewModel, onClose: () -> Unit) {
         val skipSize = if (tight) 52.dp else 60.dp
         val skipIcon = if (tight) 34.dp else 42.dp
 
-        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(glow, Color(0xFF0B0507), Color.Black))))
+        // Artwork backdrop: blurred once per track off the UI thread (see softBackdrop), then just drawn.
+        val bgBmp by produceState<Bitmap?>(null, bmp) { value = bmp?.let { withContext(Dispatchers.Default) { softBackdrop(it) } } }
+        Crossfade(bgBmp, animationSpec = tween(700), label = "bgart") { b ->
+            if (b != null) {
+                Image(b.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, alpha = 0.6f, filterQuality = FilterQuality.High)
+            }
+        }
+        Box(
+            Modifier.fillMaxSize().drawBehind {
+                // bg is read here (draw phase) so the colour animation never recomposes the screen
+                drawRect(Brush.verticalGradient(listOf(lerp(bg, Accent, 0.30f).copy(0.55f), Color(0xFF0B0507).copy(0.75f), Color.Black.copy(0.92f))))
+            }
+        )
 
         val header: @Composable () -> Unit = {
             Row(Modifier.fillMaxWidth().height(52.dp).bleed(12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -506,7 +541,23 @@ fun NowPlaying(vm: PlayerViewModel, onClose: () -> Unit) {
                         }, contentAlignment = Alignment.Center
                     ) {
                         val side = minOf(maxWidth, maxHeight)
-                        Art(song, side, 22.dp, Modifier.scale(artScale).shadow(24.dp, RoundedCornerShape(22.dp)), px = 720)
+                        AnimatedContent(
+                            song?.id, label = "art",
+                            transitionSpec = {
+                                (fadeIn(tween(450)) + scaleIn(tween(450, easing = FastOutSlowInEasing), 0.85f)) togetherWith
+                                    (fadeOut(tween(300)) + scaleOut(tween(300), 1.1f))
+                            }
+                        ) { id ->
+                            val blurR = transition.animateDp(transitionSpec = { tween(400) }, label = "artBlur") { st ->
+                                if (st == EnterExitState.Visible) 0.dp else 18.dp
+                            }
+                            Art(
+                                vm.songById(id), side, 22.dp,
+                                Modifier.motionBlurLazy { blurR.value }.graphicsLayer { scaleX = artScale; scaleY = artScale }
+                                    .shadow(24.dp, RoundedCornerShape(22.dp)),
+                                px = 720
+                            )
+                        }
                     }
                     1 -> LyricsPane(vm, song, pos)
                     else -> QueuePane(vm, ui)
@@ -526,7 +577,7 @@ fun NowPlaying(vm: PlayerViewModel, onClose: () -> Unit) {
                 }
                 val fav = song != null && song.id in favs
                 IconButton({ song?.let { vm.toggleFav(it.id) } }) {
-                    Icon(if (fav) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, "Favourite", tint = if (fav) Accent else white.copy(0.8f))
+                    HeartIcon(fav, white.copy(0.8f))
                 }
                 IconButton({ pick = true }) { Icon(Icons.Rounded.PlaylistAdd, "Add to playlist", tint = white.copy(0.8f)) }
             }
@@ -534,29 +585,17 @@ fun NowPlaying(vm: PlayerViewModel, onClose: () -> Unit) {
                 Badge(formatLabel(song?.mime ?: "")); Badge("OFFLINE")
             }
 
-            // Progress
-            Slider(
-                value = if (dragging) dragValue else (pos.toFloat() / dur).coerceIn(0f, 1f),
-                onValueChange = { dragging = true; dragValue = it },
-                onValueChangeFinished = { vm.seekTo((dragValue * dur).toLong()); pos = (dragValue * dur).toLong(); dragging = false },
-                colors = SliderDefaults.colors(thumbColor = Accent, activeTrackColor = Accent, inactiveTrackColor = white.copy(0.2f)),
-                thumb = { Box(Modifier.size(14.dp).clip(CircleShape).background(Accent)) }
-            )
-            Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                val p = if (dragging) (dragValue * dur).toLong() else pos
-                Text(fmt(p), color = white.copy(0.6f), fontSize = 12.sp)
-                Text("-" + fmt(dur - p), color = white.copy(0.6f), fontSize = 12.sp)
-            }
+            ProgressSection(vm, ui, white)
 
             // Transport
             Row(Modifier.fillMaxWidth().padding(top = 6.dp).bleed(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 ToggleIcon(Icons.Rounded.Shuffle, ui.shuffle, "Shuffle", vm::toggleShuffle)
                 IconButton(vm::previous, Modifier.size(skipSize)) { Icon(Icons.Rounded.SkipPrevious, "Previous", tint = white, modifier = Modifier.size(skipIcon)) }
                 Box(
-                    Modifier.size(playSize).shadow(20.dp, CircleShape, ambientColor = Accent, spotColor = Accent).clip(CircleShape)
-                        .background(Brush.linearGradient(listOf(Accent.copy(alpha = 0.85f), Accent))).clickable(onClick = vm::togglePlay),
+                    Modifier.size(playSize).bouncyClick(0.9f, vm::togglePlay).shadow(20.dp, CircleShape, ambientColor = Accent, spotColor = Accent).clip(CircleShape)
+                        .background(Brush.linearGradient(listOf(Accent.copy(alpha = 0.85f), Accent))),
                     contentAlignment = Alignment.Center
-                ) { Icon(if (ui.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, "Play/Pause", tint = white, modifier = Modifier.size(skipIcon)) }
+                ) { PlayPauseIcon(ui.isPlaying, skipIcon, white) }
                 IconButton(vm::next, Modifier.size(skipSize)) { Icon(Icons.Rounded.SkipNext, "Next", tint = white, modifier = Modifier.size(skipIcon)) }
                 ToggleIcon(
                     if (ui.repeat == Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat,
@@ -567,13 +606,12 @@ fun NowPlaying(vm: PlayerViewModel, onClose: () -> Unit) {
             // Volume
             if (!tight) Row(Modifier.fillMaxWidth().padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Rounded.VolumeDown, null, tint = white.copy(0.6f), modifier = Modifier.size(20.dp))
-                Slider(
+                AuraSlider(
                     value = vol,
                     onValueChange = { vol = it; volDrag = true; am.setStreamVolume(AudioManager.STREAM_MUSIC, (it * maxVol).roundToInt(), 0) },
                     onValueChangeFinished = { volDrag = false },
-                    modifier = Modifier.weight(1f).padding(horizontal = 6.dp),
-                    colors = SliderDefaults.colors(thumbColor = white, activeTrackColor = white, inactiveTrackColor = white.copy(0.2f)),
-                    thumb = { Box(Modifier.size(12.dp).clip(CircleShape).background(white)) }
+                    activeColor = white, inactiveColor = white.copy(0.2f),
+                    modifier = Modifier.weight(1f).padding(horizontal = 8.dp), thumbSize = 12.dp
                 )
                 Icon(Icons.Rounded.VolumeUp, null, tint = white.copy(0.6f), modifier = Modifier.size(20.dp))
             }
@@ -582,7 +620,7 @@ fun NowPlaying(vm: PlayerViewModel, onClose: () -> Unit) {
             Row(Modifier.fillMaxWidth().padding(bottom = 6.dp).bleed(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 IconButton({ mode = if (mode == 1) 0 else 1 }) { Icon(Icons.Rounded.FormatQuote, "Lyrics", tint = if (mode == 1) Accent else white.copy(0.7f)) }
                 Row(
-                    Modifier.weight(1f, fill = false).clip(RoundedCornerShape(20.dp)).background(white.copy(0.10f)).clickable {
+                    Modifier.weight(1f, fill = false).glass(RoundedCornerShape(20.dp), true).clickable {
                         try { ctx.startActivity(Intent(Settings.Panel.ACTION_VOLUME)) }
                         catch (_: Exception) { try { ctx.startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) } catch (_: Exception) { } }
                     }.padding(horizontal = 14.dp, vertical = 8.dp),
@@ -648,6 +686,32 @@ fun NowPlaying(vm: PlayerViewModel, onClose: () -> Unit) {
     if (showEq) EqDialog(vm) { showEq = false }
 }
 
+/** Progress bar + times with their own state, so ticking never recomposes the rest of Now Playing. */
+@Composable
+private fun ProgressSection(vm: PlayerViewModel, ui: PlayerUi, white: Color) {
+    val dur = ui.durationMs.coerceAtLeast(1L)
+    var pos by remember { mutableLongStateOf(0L) }
+    var dragging by remember { mutableStateOf(false) }
+    var dragValue by remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(ui.isPlaying, ui.currentId) {
+        pos = vm.position()
+        while (isActive && ui.isPlaying) { if (!dragging) pos = vm.position(); delay(250) }
+    }
+    val target = (pos.toFloat() / dur).coerceIn(0f, 1f)
+    val smooth by animateFloatAsState(target, tween(260, easing = LinearEasing), label = "progress")
+    AuraSlider(
+        value = if (dragging) dragValue else smooth,
+        onValueChange = { dragging = true; dragValue = it },
+        onValueChangeFinished = { vm.seekTo((dragValue * dur).toLong()); pos = (dragValue * dur).toLong(); dragging = false },
+        activeColor = Accent, inactiveColor = white.copy(0.2f)
+    )
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        val p = if (dragging) (dragValue * dur).toLong() else pos
+        Text(fmt(p), color = white.copy(0.6f), fontSize = 12.sp)
+        Text("-" + fmt(dur - p), color = white.copy(0.6f), fontSize = 12.sp)
+    }
+}
+
 @Composable
 private fun EqDialog(vm: PlayerViewModel, onClose: () -> Unit) {
     val preset by vm.preset.collectAsState()
@@ -664,8 +728,11 @@ private fun EqDialog(vm: PlayerViewModel, onClose: () -> Unit) {
                 Spacer(Modifier.height(8.dp))
                 Text("Bass boost", fontSize = 14.sp)
                 var b by remember { mutableFloatStateOf(bass.toFloat()) }
-                Slider(b, { b = it }, onValueChangeFinished = { vm.setFx(preset, b.toInt()) }, valueRange = 0f..1000f,
-                    colors = SliderDefaults.colors(thumbColor = Accent, activeTrackColor = Accent))
+                AuraSlider(
+                    value = b / 1000f, onValueChange = { b = it * 1000f },
+                    onValueChangeFinished = { vm.setFx(preset, b.toInt()) },
+                    activeColor = Accent, inactiveColor = MaterialTheme.colorScheme.onSurface.copy(0.2f)
+                )
             }
         }
     )
@@ -696,10 +763,15 @@ private fun LyricsPane(vm: PlayerViewModel, song: Song?, pos: Long) {
     LaunchedEffect(cur) { if (synced) state.animateScrollToItem((cur - 2).coerceAtLeast(0)) }
     LazyColumn(Modifier.fillMaxSize(), state = state, contentPadding = PaddingValues(vertical = 40.dp)) {
         itemsIndexed(lines) { i, l ->
+            val on = !synced || i == cur
+            val a = animateFloatAsState(if (on) 1f else 0.4f, tween(450), label = "la")
+            val sc = animateFloatAsState(if (on) 1f else 0.94f, spring(0.8f, 300f), label = "ls")
+            val br = animateDpAsState(if (on) 0.dp else 1.5.dp, tween(450), label = "lb")
             Text(
-                l.text.ifEmpty { "♪" }, fontSize = 24.sp, fontWeight = FontWeight.Bold,
-                color = Color.White.copy(if (!synced || i == cur) 1f else 0.4f),
-                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), textAlign = TextAlign.Start
+                l.text.ifEmpty { "♪" }, fontSize = 24.sp, fontWeight = FontWeight.Bold, color = Color.White,
+                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp).motionBlurLazy { br.value }
+                    .graphicsLayer { alpha = a.value; scaleX = sc.value; scaleY = sc.value; transformOrigin = TransformOrigin(0f, 0.5f) },
+                textAlign = TextAlign.Start
             )
         }
     }
@@ -737,8 +809,12 @@ fun EqBars(color: Color = Accent) {
     val t = rememberInfiniteTransition(label = "eq")
     Row(Modifier.height(18.dp).padding(end = 4.dp), horizontalArrangement = Arrangement.spacedBy(3.dp), verticalAlignment = Alignment.Bottom) {
         listOf(380, 520, 440).forEachIndexed { i, d ->
-            val h by t.animateFloat(0.25f, 1f, infiniteRepeatable(tween(d, easing = LinearEasing), RepeatMode.Reverse), label = "b$i")
-            Box(Modifier.width(3.dp).fillMaxHeight(h).clip(RoundedCornerShape(2.dp)).background(color))
+            val h = t.animateFloat(0.25f, 1f, infiniteRepeatable(tween(d, easing = LinearEasing), RepeatMode.Reverse), label = "b$i")
+            Box(
+                Modifier.width(3.dp).fillMaxHeight()
+                    .graphicsLayer { scaleY = h.value; transformOrigin = TransformOrigin(0.5f, 1f) }
+                    .clip(RoundedCornerShape(2.dp)).background(color)
+            )
         }
     }
 }
@@ -748,8 +824,8 @@ private fun LazyListScope.shelf(title: String, list: List<Song>, vm: PlayerViewM
     item { Text(title, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = Gutter, top = 14.dp, bottom = 10.dp)) }
     item {
         LazyRow(contentPadding = PaddingValues(horizontal = Gutter), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            items(list, key = { it.id }) { s ->
-                Column(Modifier.width(140.dp).clickable { vm.play(s, list, title) }) {
+            itemsIndexed(list, key = { _, it -> it.id }) { i, s ->
+                Column(Modifier.width(140.dp).fadeUp(minOf(i, 6) * 60).bouncyClick(0.96f) { vm.play(s, list, title) }) {
                     Art(s, 140.dp, 12.dp, px = 320)
                     Spacer(Modifier.height(6.dp))
                     Text(s.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 14.sp)
@@ -803,25 +879,29 @@ private fun SectionLabel(t: String, value: String? = null) {
     }
 }
 
-/** Equal-width segmented control: every option gets the same width/height, so labels never wrap or misalign. */
+/** Glass segmented control with a spring-animated sliding indicator. */
 @Composable
 private fun Segmented(options: List<String>, selected: Int, onSelect: (Int) -> Unit) {
-    Row(
-        Modifier.padding(horizontal = Gutter).fillMaxWidth().clip(RoundedCornerShape(12.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant).padding(3.dp),
-        horizontalArrangement = Arrangement.spacedBy(2.dp)
-    ) {
-        options.forEachIndexed { i, label ->
-            val on = i == selected
-            Box(
-                Modifier.weight(1f).heightIn(min = 40.dp).clip(RoundedCornerShape(10.dp))
-                    .background(if (on) Accent else Color.Transparent).clickable { onSelect(i) },
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    label, color = if (on) Color.White else MaterialTheme.colorScheme.onSurface, fontSize = 14.sp,
-                    fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1, softWrap = false, textAlign = TextAlign.Center
-                )
+    BoxWithConstraints(Modifier.padding(horizontal = Gutter).fillMaxWidth().glass(RoundedCornerShape(14.dp)).padding(3.dp)) {
+        val segW = maxWidth / options.size
+        val x = animateDpAsState(segW * selected.coerceAtLeast(0), spring(dampingRatio = 0.75f, stiffness = 380f), label = "seg")
+        if (selected >= 0) Box(
+            Modifier.offset { IntOffset(x.value.roundToPx(), 0) }.width(segW).height(42.dp).clip(RoundedCornerShape(11.dp))
+                .background(Brush.linearGradient(listOf(Accent.copy(alpha = 0.9f), Accent)))
+        )
+        Row(Modifier.fillMaxWidth()) {
+            options.forEachIndexed { i, label ->
+                val on = i == selected
+                val c by animateColorAsState(if (on) Color.White else MaterialTheme.colorScheme.onSurface, tween(250), label = "segc")
+                Box(
+                    Modifier.weight(1f).height(42.dp).clip(RoundedCornerShape(11.dp)).clickable { onSelect(i) },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        label, color = c, fontSize = 14.sp, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
+                        maxLines = 1, softWrap = false, textAlign = TextAlign.Center
+                    )
+                }
             }
         }
     }
@@ -844,8 +924,10 @@ fun SettingsScreen(vm: PlayerViewModel, onBack: () -> Unit) {
             val d = minOf(40.dp, (maxWidth - gap * (AccentChoices.size - 1)) / AccentChoices.size)
             Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
                 AccentChoices.forEachIndexed { i, c ->
-                    Box(Modifier.size(d).clip(CircleShape).background(c).clickable { vm.setAccent(i) }, contentAlignment = Alignment.Center) {
-                        if (acc == i) Icon(Icons.Rounded.Check, "Selected", tint = Color.White, modifier = Modifier.size(d / 1.8f))
+                    Box(Modifier.size(d).bouncyClick(0.85f) { vm.setAccent(i) }.clip(CircleShape).background(c), contentAlignment = Alignment.Center) {
+                        AnimatedVisibility(acc == i, enter = scaleIn(spring(0.5f, 500f)) + fadeIn(), exit = scaleOut() + fadeOut()) {
+                            Icon(Icons.Rounded.Check, "Selected", tint = Color.White, modifier = Modifier.size(d / 1.8f))
+                        }
                     }
                 }
             }

@@ -10,7 +10,18 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.ExperimentalAnimationApi
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -55,7 +66,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    @OptIn(ExperimentalLayoutApi::class)
+    override fun onResume() {
+        super.onResume()
+        vm.refresh()
+    }
+
+    @OptIn(ExperimentalLayoutApi::class, ExperimentalAnimationApi::class)
     @Composable
     private fun App() {
         val ui by vm.ui.collectAsState()
@@ -91,10 +107,11 @@ class MainActivity : ComponentActivity() {
 
         val hasTrack = ui.currentId != null
         BoxWithConstraints(Modifier.fillMaxSize()) {
+            AuroraBackground()
             // Tablets / landscape: side rail instead of the bottom bar, and content capped to a readable width.
             val rail = maxWidth >= 840.dp
             Row(Modifier.fillMaxSize()) {
-                if (rail) NavigationRail(containerColor = MaterialTheme.colorScheme.surface) {
+                if (rail) NavigationRail(containerColor = Color.Transparent, modifier = Modifier.glass(RoundedCornerShape(topEnd = 24.dp, bottomEnd = 24.dp))) {
                     Spacer(Modifier.weight(1f))
                     Tab.values().forEach { t ->
                         NavigationRailItem(
@@ -114,24 +131,50 @@ class MainActivity : ComponentActivity() {
                         contentAlignment = Alignment.TopCenter
                     ) {
                         Box(Modifier.widthIn(max = 720.dp).fillMaxSize()) {
-                            val d = detail
-                            if (d != null) {
-                                if (d.second == "settings") SettingsScreen(vm) { detail = null }
-                                else DetailScreen(vm, d.first, d.second) { detail = null }
-                            } else when (tab) {
-                                Tab.Home -> HomeScreen(vm) { detail = "Settings" to "settings" }
-                                Tab.Songs -> SongListScreen(vm, "Songs", songs, null, true)
-                                Tab.Albums -> AlbumsScreen(vm) { t, k -> detail = t to k }
-                                Tab.Artists -> ArtistsScreen(vm) { t, k -> detail = t to k }
-                                Tab.Playlists -> PlaylistsScreen(vm) { t, k -> detail = t to k }
+                            AnimatedContent(
+                                targetState = tab to detail, label = "screens",
+                                transitionSpec = {
+                                    val e = tween<androidx.compose.ui.unit.IntOffset>(420, easing = FastOutSlowInEasing)
+                                    val opening = targetState.second != null && initialState.second == null
+                                    val closing = targetState.second == null && initialState.second != null
+                                    when {
+                                        opening -> (slideInHorizontally(e) { it / 3 } + fadeIn(tween(420))) togetherWith
+                                            (slideOutHorizontally(e) { -it / 5 } + fadeOut(tween(260)))
+                                        closing -> (slideInHorizontally(e) { -it / 5 } + fadeIn(tween(420))) togetherWith
+                                            (slideOutHorizontally(e) { it / 3 } + fadeOut(tween(260)))
+                                        else -> (fadeIn(tween(380)) + scaleIn(tween(380, easing = FastOutSlowInEasing), 0.94f)) togetherWith fadeOut(tween(220))
+                                    }
+                                }
+                            ) { (t, d) ->
+                                MotionBlurBox(10.dp) {
+                                    if (d != null) {
+                                        if (d.second == "settings") SettingsScreen(vm) { detail = null }
+                                        else DetailScreen(vm, d.first, d.second) { detail = null }
+                                    } else when (t) {
+                                        Tab.Home -> HomeScreen(vm) { detail = "Settings" to "settings" }
+                                        Tab.Songs -> SongListScreen(vm, "Songs", songs, null, true)
+                                        Tab.Albums -> AlbumsScreen(vm) { tt, k -> detail = tt to k }
+                                        Tab.Artists -> ArtistsScreen(vm) { tt, k -> detail = tt to k }
+                                        Tab.Playlists -> PlaylistsScreen(vm) { tt, k -> detail = tt to k }
+                                    }
+                                }
                             }
                         }
                     }
-                    if (hasTrack) Box(
-                        Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal)),
-                        contentAlignment = Alignment.TopCenter
-                    ) { Box(Modifier.widthIn(max = 720.dp)) { MiniPlayer(vm) { showPlayer = true } } }
-                    if (!rail) NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+                    AnimatedVisibility(
+                        hasTrack,
+                        enter = slideInVertically(tween(420, easing = FastOutSlowInEasing)) { it } + fadeIn(tween(300)),
+                        exit = slideOutVertically(tween(300)) { it } + fadeOut(tween(200))
+                    ) {
+                        Box(
+                            Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal)),
+                            contentAlignment = Alignment.TopCenter
+                        ) { Box(Modifier.widthIn(max = 720.dp)) { MiniPlayer(vm) { showPlayer = true } } }
+                    }
+                    if (!rail) NavigationBar(
+                        containerColor = Color.Transparent, tonalElevation = 0.dp,
+                        modifier = Modifier.glass(RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp))
+                    ) {
                         Tab.values().forEach { t ->
                             NavigationBarItem(
                                 selected = tab == t, onClick = { tab = t; detail = null },
@@ -144,8 +187,12 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
-            AnimatedVisibility(showPlayer && hasTrack, enter = slideInVertically { it }, exit = slideOutVertically { it }) {
-                NowPlaying(vm) { showPlayer = false }
+            AnimatedVisibility(
+                showPlayer && hasTrack,
+                enter = slideInVertically(tween(520, easing = FastOutSlowInEasing)) { it } + fadeIn(tween(300)),
+                exit = slideOutVertically(tween(420, easing = FastOutSlowInEasing)) { it } + fadeOut(tween(300))
+            ) {
+                MotionBlurBox(18.dp) { NowPlaying(vm) { showPlayer = false } }
             }
         }
         BackHandler(enabled = showPlayer) { showPlayer = false }

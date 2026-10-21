@@ -27,7 +27,11 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions { jvmTarget = "17" }
+    kotlinOptions {
+        jvmTarget = "17"
+        // Skip recomposition of composables whose inputs (including lists/lambdas) did not change.
+        freeCompilerArgs += listOf("-P", "plugin:androidx.compose.compiler.plugins.kotlin:experimentalStrongSkipping=true")
+    }
     buildFeatures { compose = true }
     composeOptions { kotlinCompilerExtensionVersion = "1.5.14" }
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
@@ -46,4 +50,6 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.3.1")
     implementation("androidx.media3:media3-session:1.3.1")
     implementation("com.google.guava:guava:33.2.1-android")
+    // Installs the baseline profiles bundled in Compose/Media3 so release builds are pre-compiled (no first-run jank).
+    implementation("androidx.profileinstaller:profileinstaller:1.3.1")
 }
