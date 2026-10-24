@@ -71,6 +71,7 @@ class PlaybackService : MediaLibraryService() {
 
     private var session: MediaLibrarySession? = null
     private lateinit var player: ExoPlayer
+    private var floating: FloatingMini? = null
     private var eq: Equalizer? = null
     private var bassFx: BassBoost? = null
     private var loudFx: LoudnessEnhancer? = null
@@ -294,6 +295,10 @@ class PlaybackService : MediaLibraryService() {
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_LOCAL)
             .build()
+        floating = FloatingMini(this, player).also { FloatingMini.instance = it }
+        player.addListener(object : Player.Listener {
+            override fun onEvents(p: Player, events: Player.Events) { floating?.refresh() }
+        })
         player.addListener(object : Player.Listener {
             override fun onAudioSessionIdChanged(audioSessionId: Int) = initFx(audioSessionId)
             override fun onIsPlayingChanged(isPlaying: Boolean) { startTicker(); updateShake(); refreshWidget() }
@@ -376,6 +381,7 @@ class PlaybackService : MediaLibraryService() {
         handler.removeCallbacksAndMessages(null)
         (getSystemService(Context.SENSOR_SERVICE) as SensorManager).unregisterListener(shakeL)
         (getSystemService(Context.AUDIO_SERVICE) as AudioManager).unregisterAudioDeviceCallback(deviceCb)
+        floating?.release(); floating = null
         io.shutdown(); libExec.shutdown()
         eq?.release(); bassFx?.release(); loudFx?.release()
         session?.run { player.release(); release() }

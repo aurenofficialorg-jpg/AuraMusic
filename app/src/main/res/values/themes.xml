@@ -9,10 +9,10 @@
     <!-- Launch screen: brand icon on the same background the app opens with (follows the system light/dark setting). -->
     <style name="Theme.Aura.Starting" parent="Theme.SplashScreen">
         <item name="windowSplashScreenBackground">@color/bg</item>
-        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_icon</item>
         <item name="postSplashScreenTheme">@style/Theme.Aura</item>
     </style>
 
     <color name="bg">#FFFFFF</color>
-    <color name="ic_bg">#FA2D48</color>
+    <color name="ic_bg">#000000</color>
 </resources>

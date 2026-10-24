@@ -68,6 +68,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     val xfade = MutableStateFlow(store.xfade)
     val loud = MutableStateFlow(store.loud)
     val shake = MutableStateFlow(store.shake)
+    val floatMini = MutableStateFlow(store.floatMini)
     val hpResume = MutableStateFlow(store.hpResume)
     val tod = MutableStateFlow(store.tod())
     val abStart = MutableStateFlow(-1L)
@@ -332,6 +333,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     }
     fun setXfade(sec: Int) { xfade.value = sec; store.xfade = sec; sendPrefs() }
     fun setLoud(mb: Int) { loud.value = mb; store.loud = mb; sendPrefs(); store.saveProfile(outKey, preset.value, bass.value, mb) }
+    fun setFloatMini(on: Boolean) { floatMini.value = on; store.floatMini = on; FloatingMini.instance?.refresh() }
     fun setShake(on: Boolean) { shake.value = on; store.shake = on; sendPrefs() }
     fun setHpResume(on: Boolean) { hpResume.value = on; store.hpResume = on; sendPrefs() }
 

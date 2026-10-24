@@ -90,6 +90,9 @@ class Store(ctx: Context) {
     var loud: Int
         get() = sp.getInt("loud", 0)
         set(v) = sp.edit().putInt("loud", v).apply()
+    var floatMini: Boolean
+        get() = sp.getBoolean("floatMini", false)
+        set(v) = sp.edit().putBoolean("floatMini", v).apply()
     var shake: Boolean
         get() = sp.getBoolean("shake", false)
         set(v) = sp.edit().putBoolean("shake", v).apply()

@@ -111,10 +111,13 @@ fun Modifier.bouncyTick(pressed: Float = 0.95f, onClick: () -> Unit): Modifier {
 fun Modifier.glass(shape: Shape, forceDark: Boolean? = null): Modifier {
     val dark = forceDark ?: isDarkTheme()
     val base = if (dark) Color.White else Color.Black
-    val fill = Brush.linearGradient(listOf(base.copy(if (dark) 0.16f else 0.07f), base.copy(if (dark) 0.05f else 0.03f)))
-    val rim = Brush.linearGradient(
-        listOf(base.copy(if (dark) 0.38f else 0.14f), base.copy(if (dark) 0.04f else 0.02f), base.copy(if (dark) 0.18f else 0.08f))
-    )
+    // Cached per theme: new Brush objects every recomposition would make Compose redraw every glass surface each time.
+    val fill = remember(dark) { Brush.linearGradient(listOf(base.copy(if (dark) 0.16f else 0.07f), base.copy(if (dark) 0.05f else 0.03f))) }
+    val rim = remember(dark) {
+        Brush.linearGradient(
+            listOf(base.copy(if (dark) 0.38f else 0.14f), base.copy(if (dark) 0.04f else 0.02f), base.copy(if (dark) 0.18f else 0.08f))
+        )
+    }
     return this.clip(shape).background(fill, shape).border(1.dp, rim, shape)
 }
 
@@ -135,7 +138,7 @@ fun Modifier.motionBlurLazy(radius: () -> Dp): Modifier = this.graphicsLayer {
 fun Modifier.bouncyClick(pressed: Float = 0.95f, onClick: () -> Unit): Modifier {
     val src = remember { MutableInteractionSource() }
     val down by src.collectIsPressedAsState()
-    val sc by animateFloatAsState(if (down) pressed else 1f, spring(dampingRatio = 0.45f, stiffness = 500f), label = "press")
+    val sc by animateFloatAsState(if (down) pressed else 1f, spring(dampingRatio = 0.6f, stiffness = 420f), label = "press")
     return this.graphicsLayer { scaleX = sc; scaleY = sc }
         .clickable(interactionSource = src, indication = null, onClick = onClick)
 }
@@ -180,7 +183,7 @@ fun AuroraBackground() {
 /** Content that is blurred while entering/leaving an AnimatedVisibility / AnimatedContent and sharp once settled. */
 @Composable
 fun AnimatedVisibilityScope.MotionBlurBox(maxBlur: Dp = 16.dp, content: @Composable () -> Unit) {
-    val r = transition.animateDp(transitionSpec = { tween(420) }, label = "mb") { if (it == EnterExitState.Visible) 0.dp else maxBlur }
+    val r = transition.animateDp(transitionSpec = { tween(280, easing = androidx.compose.animation.core.LinearOutSlowInEasing) }, label = "mb") { if (it == EnterExitState.Visible) 0.dp else maxBlur }
     Box(Modifier.fillMaxSize().motionBlurLazy { r.value }) { content() }
 }
 

@@ -40,6 +40,8 @@ import kotlin.math.roundToInt
 import android.graphics.Bitmap
 import android.os.Build
 import androidx.compose.foundation.Image
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
@@ -1072,18 +1074,32 @@ private fun QueuePane(vm: PlayerViewModel, ui: PlayerUi) {
             }
             Box(
                 Modifier.fillMaxWidth().height(rowH).onSizeChanged { rowW = it.width }
+                    .drawBehind {
+                        val w = abs(sx.value)
+                        if (w > 0.5f) {
+                            val inset = 4.dp.toPx()
+                            drawRoundRect(
+                                Color(0xFFFF3B30), Offset(if (sx.value > 0) 0f else size.width - w, inset),
+                                Size(w, size.height - inset * 2), CornerRadius(Radius.Thumb.toPx())
+                            )
+                        }
+                    }
                     .then(
                         if (dragging) Modifier.zIndex(1f).graphicsLayer { translationY = dragOffset; scaleX = 1.03f; scaleY = 1.03f }
                         else Modifier.animateItemPlacement()
                     )
             ) {
-                // Red "remove" strip that grows from the side being swiped
-                if (sx.value != 0f) Box(
-                    Modifier.align(if (sx.value > 0) Alignment.CenterStart else Alignment.CenterEnd)
-                        .width(with(density) { abs(sx.value).toDp() }).fillMaxHeight().padding(vertical = 4.dp)
-                        .clip(RoundedCornerShape(Radius.Thumb)).background(Color(0xFFFF3B30)),
-                    contentAlignment = if (sx.value > 0) Alignment.CenterStart else Alignment.CenterEnd
-                ) { Icon(Icons.Rounded.Delete, "Remove", tint = Color.White, modifier = Modifier.padding(horizontal = 16.dp).size(22.dp)) }
+                // Trash icons fade in from whichever side is being swiped (alpha is read at draw time)
+                Icon(
+                    Icons.Rounded.Delete, null, tint = Color.White,
+                    modifier = Modifier.align(Alignment.CenterStart).padding(start = 16.dp).size(22.dp)
+                        .graphicsLayer { alpha = (sx.value / 60f).coerceIn(0f, 1f) }
+                )
+                Icon(
+                    Icons.Rounded.Delete, null, tint = Color.White,
+                    modifier = Modifier.align(Alignment.CenterEnd).padding(end = 16.dp).size(22.dp)
+                        .graphicsLayer { alpha = (-sx.value / 60f).coerceIn(0f, 1f) }
+                )
                 Row(
                     Modifier.fillMaxSize().offset { IntOffset(sx.value.roundToInt(), 0) }
                         .pointerInput(i) {
@@ -1450,12 +1466,36 @@ fun SettingsScreen(vm: PlayerViewModel, onOpen: (String, String) -> Unit, onBack
             ToggleRow(Icons.Rounded.Vibration, "Shake to skip", "Shake your phone firmly to play the next song", shake) { vm.setShake(it) }
             RowDivider()
             ToggleRow(Icons.Rounded.PlayCircle, "Resume on headphones", "Continue playing when you reconnect headphones after unplugging", hp) { vm.setHpResume(it) }
+            RowDivider()
+            val ctxS = LocalContext.current
+            val floatOn by vm.floatMini.collectAsState()
+            ToggleRow(
+                Icons.Rounded.PictureInPictureAlt, "Floating mini player",
+                if (floatOn && !Settings.canDrawOverlays(ctxS)) "Allow \u201cDisplay over other apps\u201d for Aura Music, then switch this off and on again"
+                else "A small draggable player over other apps while music is loaded",
+                floatOn
+            ) { on ->
+                vm.setFloatMini(on)
+                if (on && !Settings.canDrawOverlays(ctxS)) runCatching {
+                    ctxS.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, android.net.Uri.parse("package:${ctxS.packageName}")))
+                }
+            }
         }
 
         SectionLabel("About")
         SettingsCard {
-            SettingHeader(Icons.Rounded.Info, "Aura Music 2.0")
-            Footnote("Offline player. Your music never leaves your phone.")
+            Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Image(painterResource(R.drawable.aura_emblem), "Aura Music logo", Modifier.size(56.dp))
+                Spacer(Modifier.width(16.dp))
+                Column {
+                    Text("Aura Music 2.0", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Developed by Hiten Kashyap", fontSize = 14.sp, color = Accent, fontWeight = FontWeight.Medium)
+                }
+            }
+            Text(
+                "Offline player. Your music never leaves your phone.", fontSize = 13.sp, color = sub(),
+                modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp)
+            )
         }
     }
 }

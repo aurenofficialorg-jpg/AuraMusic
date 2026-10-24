@@ -1,0 +1,4 @@
+# Baseline profile: tells Android to pre-compile the app's own code at install time, so the first launch and the first
+# animations run smoothly instead of being interpreted. (Compose and Media3 ship their own profiles.)
+HSPLcom/aura/player/**;->**(**)**
+Lcom/aura/player/**;
