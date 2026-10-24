@@ -120,7 +120,7 @@ class MainActivity : ComponentActivity() {
         val accIdx by vm.accentIdx.collectAsState()
         val artVer = ArtCache.version
         val appCtx = androidx.compose.ui.platform.LocalContext.current
-        val accentAnim = remember { androidx.compose.animation.core.Animatable(Accent) }
+        val accentAnim = remember { androidx.compose.animation.Animatable(Accent) } // Color overload lives in androidx.compose.animation, not .core
         LaunchedEffect(ui.currentId, dyn, accIdx, artVer) {
             val base = AccentChoices[accIdx.coerceIn(0, AccentChoices.lastIndex)]
             val target = if (!dyn) base else {
