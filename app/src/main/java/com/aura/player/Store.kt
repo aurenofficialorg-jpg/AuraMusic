@@ -56,6 +56,34 @@ class Store(ctx: Context) {
         get() = sp.getFloat("speed", 1f)
         set(v) = sp.edit().putFloat("speed", v).apply()
 
+    var hideRec: Boolean
+        get() = sp.getBoolean("hideRec", true)
+        set(v) = sp.edit().putBoolean("hideRec", v).apply()
+
+    /** Last queue so playback can be resumed after the app/service was killed. */
+    fun saveSession(ids: List<Long>, cur: Long, pos: Long) =
+        sp.edit().putString("sess_ids", ids.joinToString(",")).putLong("sess_cur", cur).putLong("sess_pos", pos).apply()
+    fun sessionIds(): List<Long> = ids("sess_ids")
+    fun sessionCur(): Long = sp.getLong("sess_cur", -1L)
+    fun sessionPos(): Long = sp.getLong("sess_pos", 0L)
+
+    var dyn: Boolean
+        get() = sp.getBoolean("dyn", true)
+        set(v) = sp.edit().putBoolean("dyn", v).apply()
+    fun hidden(): Set<Long> = ids("hidden").toSet()
+    fun saveHidden(s: Set<Long>) = sp.edit().putString("hidden", s.joinToString(",")).apply()
+
+    /** Equalizer + loudness remembered per output (speaker, each pair of headphones). */
+    fun profile(key: String): Triple<Int, Int, Int>? {
+        val a = JSONObject(sp.getString("profiles", "{}") ?: "{}").optJSONArray(key) ?: return null
+        return Triple(a.optInt(0), a.optInt(1), a.optInt(2))
+    }
+    fun saveProfile(key: String, preset: Int, bass: Int, loud: Int) {
+        val o = JSONObject(sp.getString("profiles", "{}") ?: "{}")
+        o.put(key, JSONArray(listOf(preset, bass, loud)))
+        sp.edit().putString("profiles", o.toString()).apply()
+    }
+
     var xfade: Int
         get() = sp.getInt("xfade", 0)
         set(v) = sp.edit().putInt("xfade", v).apply()

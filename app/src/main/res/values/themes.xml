@@ -5,6 +5,14 @@
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
     </style>
-    <color name="bg">#000000</color>
+
+    <!-- Launch screen: brand icon on the same background the app opens with (follows the system light/dark setting). -->
+    <style name="Theme.Aura.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/bg</item>
+        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+        <item name="postSplashScreenTheme">@style/Theme.Aura</item>
+    </style>
+
+    <color name="bg">#FFFFFF</color>
     <color name="ic_bg">#FA2D48</color>
 </resources>

@@ -25,11 +25,16 @@ import androidx.media3.common.Player
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.DefaultMediaNotificationProvider
+import androidx.media3.session.LibraryResult
+import androidx.media3.session.MediaLibraryService
+import androidx.media3.session.MediaLibraryService.LibraryParams
+import androidx.media3.session.MediaLibraryService.MediaLibrarySession
 import androidx.media3.session.MediaSession
-import androidx.media3.session.MediaSessionService
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionResult
+import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.Futures
+import com.google.common.util.concurrent.MoreExecutors
 import com.google.common.util.concurrent.ListenableFuture
 import java.util.concurrent.Executors
 import kotlin.math.sqrt
@@ -38,12 +43,12 @@ import kotlin.math.sqrt
  * Foreground media service: keeps music playing with the screen off or the app closed.
  * Owns everything that must keep working in the background: equalizer, bass boost, loudness boost,
  * sleep timer (with fade-out), fade between songs, A-B repeat, shake-to-skip, headphone auto-resume
- * and the home-screen widget.
+ * the home-screen widget, the quick-settings tile and the Android Auto / Bluetooth-car browse tree.
  *
  * Battery notes: the 80 ms ticker only runs while music plays AND fade/A-B is on; the accelerometer is
  * only registered while music plays AND shake-to-skip is on.
  */
-class PlaybackService : MediaSessionService() {
+class PlaybackService : MediaLibraryService() {
     companion object {
         const val CMD_FX = "aura.fx"
         const val CMD_SLEEP = "aura.sleep"
@@ -64,7 +69,7 @@ class PlaybackService : MediaSessionService() {
         )
     }
 
-    private var session: MediaSession? = null
+    private var session: MediaLibrarySession? = null
     private lateinit var player: ExoPlayer
     private var eq: Equalizer? = null
     private var bassFx: BassBoost? = null
@@ -148,14 +153,21 @@ class PlaybackService : MediaSessionService() {
     }
 
     // ---- widget -------------------------------------------------------------------------
-    private fun refreshWidget() {
-        if (!AuraWidget.hasInstances(this)) return
+    private val refreshRun = Runnable { refreshSurfaces() }
+    /** Several player events fire together on a song change; coalesce them into one update. */
+    private fun refreshWidget() { handler.removeCallbacks(refreshRun); handler.postDelayed(refreshRun, 120) }
+
+    private fun refreshSurfaces() {
         val item = player.currentMediaItem
         val md = item?.mediaMetadata
         val playing = player.isPlaying
         val id = item?.mediaId?.toLongOrNull()
         val album = md?.artworkUri?.getQueryParameter("albumId")?.toLongOrNull() ?: 0L
         val title = md?.title?.toString(); val artist = md?.artist?.toString()
+        if (AuraTile.playing != playing || AuraTile.title != title) {
+            AuraTile.playing = playing; AuraTile.title = title; AuraTile.refresh(this)
+        }
+        if (!AuraWidget.hasInstances(this)) return
         val ctx = applicationContext
         io.execute {
             val art = id?.let { ArtCache.load(ctx, Song(it, "", "", "", album, 0L), 160) }
@@ -163,7 +175,76 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
-    private val callback = object : MediaSession.Callback {
+    // ---- Android Auto / car browse tree ------------------------------------------------
+    private val libExec = MoreExecutors.listeningDecorator(Executors.newSingleThreadExecutor())
+    private val store by lazy { Store(this) }
+    @Volatile private var lib: List<Song> = emptyList()
+    private fun library(): List<Song> {
+        if (lib.isEmpty()) {
+            val hidden = store.hidden()
+            lib = MusicRepository.load(contentResolver).filterNot { it.isRecording || it.id in hidden }
+        }
+        return lib
+    }
+    private fun browseItem(id: String, title: String, subtitle: String? = null) = MediaItem.Builder().setMediaId(id)
+        .setMediaMetadata(
+            MediaMetadata.Builder().setTitle(title).setSubtitle(subtitle).setIsBrowsable(true).setIsPlayable(false).build()
+        ).build()
+    private fun playable(s: Song): MediaItem {
+        val m = s.toMediaItem()
+        return m.buildUpon().setMediaMetadata(m.mediaMetadata.buildUpon().setIsBrowsable(false).setIsPlayable(true).build()).build()
+    }
+    private fun children(parent: String): List<MediaItem> {
+        val all = library()
+        return when {
+            parent == "root" -> listOf(
+                browseItem("recent", "Recently Played"), browseItem("favs", "Favourites"),
+                browseItem("songs", "All Songs"), browseItem("albums", "Albums"), browseItem("artists", "Artists")
+            )
+            parent == "recent" -> store.recents().mapNotNull { id -> all.firstOrNull { it.id == id } }.map(::playable)
+            parent == "favs" -> store.favs().let { f -> all.filter { it.id in f } }.map(::playable)
+            parent == "songs" -> all.map(::playable)
+            parent == "albums" -> all.groupBy { it.albumId }.values.map { browseItem("album:${it.first().albumId}", it.first().album, it.first().artist) }
+            parent == "artists" -> all.map { it.artist }.distinct().sorted().map { browseItem("artist:$it", it) }
+            parent.startsWith("album:") -> all.filter { it.albumId == parent.drop(6).toLongOrNull() }.map(::playable)
+            parent.startsWith("artist:") -> all.filter { it.artist == parent.drop(7) }.map(::playable)
+            else -> emptyList()
+        }
+    }
+
+    private val callback = object : MediaLibrarySession.Callback {
+        override fun onGetLibraryRoot(
+            session: MediaLibrarySession, browser: MediaSession.ControllerInfo, params: LibraryParams?
+        ): ListenableFuture<LibraryResult<MediaItem>> =
+            Futures.immediateFuture(LibraryResult.ofItem(browseItem("root", "Aura Music"), params))
+
+        override fun onGetChildren(
+            session: MediaLibrarySession, browser: MediaSession.ControllerInfo,
+            parentId: String, page: Int, pageSize: Int, params: LibraryParams?
+        ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> =
+            libExec.submit<LibraryResult<ImmutableList<MediaItem>>> {
+                val list = children(parentId).drop(page * pageSize).take(pageSize)
+                LibraryResult.ofItemList(ImmutableList.copyOf(list), params)
+            }
+
+        override fun onGetItem(
+            session: MediaLibrarySession, browser: MediaSession.ControllerInfo, mediaId: String
+        ): ListenableFuture<LibraryResult<MediaItem>> = libExec.submit<LibraryResult<MediaItem>> {
+            val s = mediaId.toLongOrNull()?.let { id -> library().firstOrNull { it.id == id } }
+            if (s != null) LibraryResult.ofItem(playable(s), null)
+            else LibraryResult.ofItem(browseItem(mediaId, mediaId), null)
+        }
+
+        // Cars send bare media ids: turn them back into playable items. Our own app already sends full items.
+        override fun onAddMediaItems(
+            mediaSession: MediaSession, controller: MediaSession.ControllerInfo, mediaItems: MutableList<MediaItem>
+        ): ListenableFuture<MutableList<MediaItem>> = libExec.submit<MutableList<MediaItem>> {
+            mediaItems.map { m ->
+                if (m.localConfiguration != null) m
+                else m.mediaId.toLongOrNull()?.let { id -> library().firstOrNull { it.id == id } }?.let(::playable) ?: m
+            }.toMutableList()
+        }
+
         override fun onConnect(
             session: MediaSession, controller: MediaSession.ControllerInfo
         ): MediaSession.ConnectionResult {
@@ -235,8 +316,7 @@ class PlaybackService : MediaSessionService() {
             Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
-        session = MediaSession.Builder(this, player)
-            .setCallback(callback)
+        session = MediaLibrarySession.Builder(this, player, callback)
             .setSessionActivity(open)               // tapping the notification / lock-screen card opens the app
             .setBitmapLoader(AuraBitmapLoader(this)) // cover art for notification + lock screen
             .build()
@@ -286,7 +366,7 @@ class PlaybackService : MediaSessionService() {
         } catch (_: Exception) { }
     }
 
-    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session
+    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession? = session
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         if (!player.playWhenReady || player.mediaItemCount == 0) stopSelf()
@@ -296,7 +376,7 @@ class PlaybackService : MediaSessionService() {
         handler.removeCallbacksAndMessages(null)
         (getSystemService(Context.SENSOR_SERVICE) as SensorManager).unregisterListener(shakeL)
         (getSystemService(Context.AUDIO_SERVICE) as AudioManager).unregisterAudioDeviceCallback(deviceCb)
-        io.shutdown()
+        io.shutdown(); libExec.shutdown()
         eq?.release(); bassFx?.release(); loudFx?.release()
         session?.run { player.release(); release() }
         session = null

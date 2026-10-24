@@ -2,6 +2,10 @@ package com.aura.player
 
 import android.app.Application
 import android.content.ComponentName
+import android.content.Context
+import android.media.AudioDeviceCallback
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
 import android.database.ContentObserver
 import android.os.Bundle
 import android.os.Handler
@@ -11,6 +15,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.media3.common.C
+import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
@@ -22,6 +28,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class PlayerUi(
     val currentId: Long? = null,
@@ -30,6 +37,8 @@ data class PlayerUi(
     val repeat: Int = Player.REPEAT_MODE_OFF,
     val durationMs: Long = 0L,
     val queueIndex: Int = 0,
+    /** Real stream details for the current track, e.g. "256 kbps · 44.1 kHz". Empty until the player reports tracks. */
+    val audioInfo: String = "",
 )
 
 class PlayerViewModel(app: Application) : AndroidViewModel(app) {
@@ -54,6 +63,8 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     val accentIdx = MutableStateFlow(store.accentIdx)
     val speed = MutableStateFlow(store.speed)
     val source = MutableStateFlow("Library")
+    val hideRec = MutableStateFlow(store.hideRec)
+    val recCount = MutableStateFlow(0)
     val xfade = MutableStateFlow(store.xfade)
     val loud = MutableStateFlow(store.loud)
     val shake = MutableStateFlow(store.shake)
@@ -61,6 +72,34 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     val tod = MutableStateFlow(store.tod())
     val abStart = MutableStateFlow(-1L)
     val abEnd = MutableStateFlow(-1L)
+    val dynColors = MutableStateFlow(store.dyn)
+    val hidden = MutableStateFlow(store.hidden())
+
+    // Sound profile per output: speaker and every pair of headphones keep their own EQ + loudness.
+    val outName = MutableStateFlow("This Phone")
+    private var outKey = "speaker"
+    private val audio = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    private val devCb = object : AudioDeviceCallback() {
+        override fun onAudioDevicesAdded(added: Array<out AudioDeviceInfo>) = refreshOut()
+        override fun onAudioDevicesRemoved(removed: Array<out AudioDeviceInfo>) = refreshOut()
+    }
+    private fun refreshOut() {
+        val types = setOf(
+            AudioDeviceInfo.TYPE_WIRED_HEADPHONES, AudioDeviceInfo.TYPE_WIRED_HEADSET,
+            AudioDeviceInfo.TYPE_USB_HEADSET, AudioDeviceInfo.TYPE_BLUETOOTH_A2DP, 26 /* BLE headset */
+        )
+        val d = audio.getDevices(AudioManager.GET_DEVICES_OUTPUTS).firstOrNull { it.type in types }
+        val key = if (d == null) "speaker" else "${d.type}:${d.productName}"
+        outName.value = if (d == null) "This Phone" else (d.productName?.toString()?.takeIf { it.isNotBlank() } ?: "Headphones")
+        if (key == outKey) return
+        store.saveProfile(outKey, preset.value, bass.value, loud.value)
+        outKey = key
+        store.profile(key)?.let { (p, b, l) ->
+            preset.value = p; bass.value = b; loud.value = l
+            store.preset = p; store.bass = b; store.loud = l
+            sendFx(); sendPrefs()
+        }
+    }
 
     private var byId: Map<Long, Song> = emptyMap()
     private val itemCache = HashMap<Long, MediaItem>()
@@ -93,6 +132,8 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         app.contentResolver.registerContentObserver(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, true, observer)
+        audio.registerAudioDeviceCallback(devCb, Handler(Looper.getMainLooper()))
+        refreshOut()
         Accent = AccentChoices[store.accentIdx.coerceIn(0, AccentChoices.lastIndex)]
         val token = SessionToken(app, ComponentName(app, PlaybackService::class.java))
         val f = MediaController.Builder(app, token).buildAsync()
@@ -100,7 +141,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             val c = f.get()
             controller = c
             c.addListener(listener)
-            syncQueue(c); sync(c); sendFx(); sendPrefs(); c.setPlaybackSpeed(speed.value)
+            syncQueue(c); sync(c); sendFx(); sendPrefs(); c.setPlaybackSpeed(speed.value); restoreSession()
         }, MoreExecutors.directExecutor())
     }
 
@@ -122,20 +163,73 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
             store.saveTod(tod.value)
             abStart.value = -1L; abEnd.value = -1L
         }
+        if (id != null && (!p.isPlaying || id != _ui.value.currentId)) saveSession(p)
         _ui.value = PlayerUi(
             id, p.isPlaying, p.shuffleModeEnabled, p.repeatMode,
-            p.duration.coerceAtLeast(0L), p.currentMediaItemIndex
+            p.duration.coerceAtLeast(0L), p.currentMediaItemIndex,
+            audioInfoOf(p)
         )
+    }
+
+    @androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
+    private fun audioInfoOf(p: Player): String {
+        val fmt = p.currentTracks.groups
+            .firstOrNull { it.type == C.TRACK_TYPE_AUDIO && it.isSelected && it.length > 0 }
+            ?.getTrackFormat(0) ?: return ""
+        val parts = ArrayList<String>(2)
+        val br = if (fmt.averageBitrate != Format.NO_VALUE) fmt.averageBitrate else fmt.bitrate
+        if (br != Format.NO_VALUE && br > 0) parts += "${(br + 500) / 1000} kbps"
+        if (fmt.sampleRate != Format.NO_VALUE && fmt.sampleRate > 0) {
+            val khz = fmt.sampleRate / 1000.0
+            parts += (if (khz % 1.0 == 0.0) "${khz.toInt()} kHz" else "%.1f kHz".format(khz))
+        }
+        return parts.joinToString(" · ")
     }
 
     fun loadSongs() {
         viewModelScope.launch(Dispatchers.IO) {
-            val list = MusicRepository.load(getApplication<Application>().contentResolver)
-            byId = list.associateBy { it.id }
+            val all = MusicRepository.load(getApplication<Application>().contentResolver)
+            val hid = hidden.value
+            val list = all.filter { it.id !in hid && !(hideRec.value && it.isRecording) }
+            byId = all.associateBy { it.id }
+            recCount.value = all.size - all.count { !it.isRecording }
             _songs.value = list
             _loaded.value = true
             ArtCache.clearMisses()
+            withContext(Dispatchers.Main) { restoreSession() }
         }
+    }
+
+    fun hideSong(id: Long) { hidden.value = hidden.value + id; store.saveHidden(hidden.value); loadSongs() }
+    fun unhideAll() { hidden.value = emptySet(); store.saveHidden(emptySet()); loadSongs() }
+    fun setDyn(on: Boolean) { dynColors.value = on; store.dyn = on }
+
+    /** Songs that look like the same track twice (same title + artist, ignoring "(Official Video)", case, punctuation). */
+    fun duplicates(list: List<Song>): List<Song> {
+        fun norm(t: String) = t.lowercase().replace(Regex("[(\\[].*?[)\\]]"), "").replace(Regex("[^\\p{L}\\p{N}]"), "")
+        return list.groupBy { s ->
+            val a = if (s.artist == "Unknown Artist") "?${s.durationMs / 2000}" else norm(s.artist)
+            norm(s.title) + "|" + a
+        }.values.filter { it.size > 1 }.flatMap { g -> g.sortedBy { it.dateAdded } }
+    }
+
+    fun setHideRec(on: Boolean) { hideRec.value = on; store.hideRec = on; loadSongs() }
+
+    /** Bring back the last queue (paused, at the saved position) when the app starts with an empty player. */
+    private fun restoreSession() {
+        val c = controller ?: return
+        if (!_loaded.value || c.mediaItemCount > 0) return
+        val ids = store.sessionIds().filter { it in byId }
+        if (ids.isEmpty()) return
+        val start = ids.indexOf(store.sessionCur()).coerceAtLeast(0)
+        lastId = ids[start]   // restoring is not a new play: don't count it
+        c.setMediaItems(ids.map { item(byId.getValue(it)) }, start, store.sessionPos())
+        c.prepare()
+    }
+
+    private fun saveSession(p: Player) {
+        val cur = p.currentMediaItem?.mediaId?.toLongOrNull() ?: return
+        store.saveSession(queue.value.filter { it >= 0 }, cur, p.currentPosition)
     }
 
     fun position(): Long = controller?.currentPosition ?: 0L
@@ -182,6 +276,12 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     fun jumpTo(i: Int) { controller?.let { it.seekToDefaultPosition(i); it.play() } }
     fun moveUp(i: Int) { controller?.let { if (i > it.currentMediaItemIndex + 1) it.moveMediaItem(i, i - 1) } }
     fun removeAt(i: Int) { controller?.removeMediaItem(i) }
+    fun moveItem(from: Int, to: Int) {
+        controller?.let {
+            val cur = it.currentMediaItemIndex
+            if (from > cur && to > cur && from != to) it.moveMediaItem(from, to)
+        }
+    }
 
     // Favourites & playlists
     fun toggleFav(id: Long) {
@@ -211,6 +311,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
     }
     fun setFx(p: Int, b: Int) {
         preset.value = p; bass.value = b; store.preset = p; store.bass = b; sendFx()
+        store.saveProfile(outKey, p, b, loud.value)
     }
     private fun sendFx() {
         controller?.sendCustomCommand(
@@ -230,7 +331,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
     fun setXfade(sec: Int) { xfade.value = sec; store.xfade = sec; sendPrefs() }
-    fun setLoud(mb: Int) { loud.value = mb; store.loud = mb; sendPrefs() }
+    fun setLoud(mb: Int) { loud.value = mb; store.loud = mb; sendPrefs(); store.saveProfile(outKey, preset.value, bass.value, mb) }
     fun setShake(on: Boolean) { shake.value = on; store.shake = on; sendPrefs() }
     fun setHpResume(on: Boolean) { hpResume.value = on; store.hpResume = on; sendPrefs() }
 
@@ -259,6 +360,7 @@ class PlayerViewModel(app: Application) : AndroidViewModel(app) {
 
     override fun onCleared() {
         getApplication<Application>().contentResolver.unregisterContentObserver(observer)
+        audio.unregisterAudioDeviceCallback(devCb)
         controller?.removeListener(listener)
         controller?.release()
         super.onCleared()

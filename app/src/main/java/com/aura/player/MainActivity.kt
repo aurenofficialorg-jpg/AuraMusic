@@ -18,6 +18,9 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
@@ -33,6 +36,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.font.FontWeight
@@ -53,6 +57,7 @@ class MainActivity : ComponentActivity() {
     private val vm: PlayerViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        installSplashScreen()
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
@@ -65,7 +70,7 @@ class MainActivity : ComponentActivity() {
                 primary = Accent, background = Color.White, surface = Color.White,
                 surfaceVariant = Color(0xFFF0F0F3), onSurface = Color.Black, onSurfaceVariant = Color(0xFF6E6E73)
             )
-            MaterialTheme(colorScheme = scheme) {
+            MaterialTheme(colorScheme = scheme, typography = AuraTypography) {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) { App() }
             }
         }
@@ -110,9 +115,32 @@ class MainActivity : ComponentActivity() {
             return
         }
 
+        // Whole-app colour follows the cover art of the playing song (animated; falls back to the chosen accent).
+        val dyn by vm.dynColors.collectAsState()
+        val accIdx by vm.accentIdx.collectAsState()
+        val artVer = ArtCache.version
+        val appCtx = androidx.compose.ui.platform.LocalContext.current
+        val accentAnim = remember { androidx.compose.animation.core.Animatable(Accent) }
+        LaunchedEffect(ui.currentId, dyn, accIdx, artVer) {
+            val base = AccentChoices[accIdx.coerceIn(0, AccentChoices.lastIndex)]
+            val target = if (!dyn) base else {
+                val s = vm.songById(ui.currentId)
+                val bmp = s?.let { kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { ArtCache.load(appCtx, it, 96) } }
+                bmp?.let { vibrantColor(it) } ?: base
+            }
+            if (target == Accent) return@LaunchedEffect
+            accentAnim.snapTo(Accent)
+            accentAnim.animateTo(target, tween(300)) { Accent = value }
+        }
+
         val hasTrack = ui.currentId != null
         BoxWithConstraints(Modifier.fillMaxSize()) {
-            AuroraBackground()
+            // The full-screen player hides the background, so stop animating it there (saves GPU + battery).
+            var auroraOn by remember { mutableStateOf(true) }
+            LaunchedEffect(showPlayer) {
+                if (showPlayer) { kotlinx.coroutines.delay(600); auroraOn = false } else auroraOn = true
+            }
+            if (auroraOn) AuroraBackground()
             // Tablets / landscape: side rail instead of the bottom bar, and content capped to a readable width.
             val rail = maxWidth >= 840.dp
             Row(Modifier.fillMaxSize()) {
@@ -153,7 +181,7 @@ class MainActivity : ComponentActivity() {
                             ) { (t, d) ->
                                 MotionBlurBox(4.dp) {
                                     if (d != null) {
-                                        if (d.second == "settings") SettingsScreen(vm) { detail = null }
+                                        if (d.second == "settings") SettingsScreen(vm, { tt, k -> detail = tt to k }) { detail = null }
                                         else DetailScreen(vm, d.first, d.second) { detail = null }
                                     } else when (t) {
                                         Tab.Home -> HomeScreen(vm) { detail = "Settings" to "settings" }
@@ -187,16 +215,24 @@ class MainActivity : ComponentActivity() {
                     ) {
                         Tab.values().forEach { t ->
                             val sel = tab == t
-                            val tint = if (sel) Accent else MaterialTheme.colorScheme.onSurfaceVariant
+                            val tint = androidx.compose.animation.animateColorAsState(
+                                if (sel) Accent else MaterialTheme.colorScheme.onSurfaceVariant, tween(220), label = "navTint"
+                            ).value
+                            val pill = androidx.compose.animation.animateColorAsState(
+                                if (sel) Accent.copy(alpha = 0.15f) else Color.Transparent, tween(220), label = "navPill"
+                            ).value
+                            val pop = androidx.compose.animation.core.animateFloatAsState(
+                                if (sel) 1.12f else 1f, androidx.compose.animation.core.spring(0.5f, 520f), label = "navPop"
+                            ).value
                             Column(
                                 Modifier.weight(1f).fillMaxHeight()
                                     .clip(RoundedCornerShape(26.dp))
-                                    .background(if (sel) Accent.copy(alpha = 0.15f) else Color.Transparent)
+                                    .background(pill)
                                     .clickable { tab = t; detail = null },
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 verticalArrangement = Arrangement.Center
                             ) {
-                                Icon(t.icon, t.label, tint = tint, modifier = Modifier.size(24.dp))
+                                Icon(t.icon, t.label, tint = tint, modifier = Modifier.size(24.dp).graphicsLayer { scaleX = pop; scaleY = pop })
                                 Text(
                                     t.label, color = tint, maxLines = 1, softWrap = false,
                                     fontSize = 11.sp, fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Medium
@@ -208,8 +244,11 @@ class MainActivity : ComponentActivity() {
             }
             AnimatedVisibility(
                 showPlayer && hasTrack,
-                enter = slideInVertically(tween(520, easing = FastOutSlowInEasing)) { it } + fadeIn(tween(300)),
-                exit = slideOutVertically(tween(420, easing = FastOutSlowInEasing)) { it } + fadeOut(tween(300))
+                // Grows out of (and shrinks back into) the mini player at the bottom of the screen.
+                enter = slideInVertically(tween(520, easing = FastOutSlowInEasing)) { it / 2 } +
+                    scaleIn(tween(520, easing = FastOutSlowInEasing), 0.88f, TransformOrigin(0.5f, 0.97f)) + fadeIn(tween(300)),
+                exit = slideOutVertically(tween(420, easing = FastOutSlowInEasing)) { it / 2 } +
+                    scaleOut(tween(420, easing = FastOutSlowInEasing), 0.9f, TransformOrigin(0.5f, 0.97f)) + fadeOut(tween(300))
             ) {
                 MotionBlurBox(8.dp) { NowPlaying(vm) { showPlayer = false } }
             }

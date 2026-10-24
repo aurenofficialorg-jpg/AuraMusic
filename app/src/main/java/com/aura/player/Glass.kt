@@ -73,12 +73,38 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 
 @Composable
 fun isDarkTheme() = MaterialTheme.colorScheme.background.luminance() < 0.5f
+
+/** One set of corner radii for the whole app, so covers, cards and sheets share the same family of shapes. */
+object Radius {
+    val Thumb = 10.dp      // small covers in lists and the queue
+    val Cover = 14.dp      // shelf and grid covers
+    val Control = 14.dp    // buttons, search field, segmented controls
+    val Card = 20.dp       // glass cards, mini player
+    val Hero = 24.dp       // big artwork
+    val Sheet = 28.dp      // bottom sheets
+}
+
+/** Light tick for taps and drags. Respects the system "touch feedback" setting. */
+@Composable
+fun rememberHaptic(): () -> Unit {
+    val h = LocalHapticFeedback.current
+    return remember(h) { { h.performHapticFeedback(HapticFeedbackType.TextHandleMove) } }
+}
+
+/** [bouncyClick] plus a haptic tick. */
+@Composable
+fun Modifier.bouncyTick(pressed: Float = 0.95f, onClick: () -> Unit): Modifier {
+    val tick = rememberHaptic()
+    return this.bouncyClick(pressed) { tick(); onClick() }
+}
 
 /** Frosted-glass surface: translucent gradient fill + bright rim light. */
 @Composable
@@ -190,6 +216,7 @@ fun AuraSlider(
     thumbSize: Dp = 14.dp, trackHeight: Dp = 4.dp
 ) {
     val density = LocalDensity.current
+    val tick = rememberHaptic()
     var w by remember { mutableIntStateOf(0) }
     var dragging by remember { mutableStateOf(false) }
     val grow by animateFloatAsState(if (dragging) 1.45f else 1f, spring(0.5f, 500f), label = "thumb")
@@ -209,11 +236,11 @@ fun AuraSlider(
     }
     Box(
         modifier.fillMaxWidth().height(40.dp).onSizeChanged { w = it.width }
-            .pointerInput(Unit) { detectTapGestures { o -> onChange.value(map(o.x)); onFinish.value() } }
+            .pointerInput(Unit) { detectTapGestures { o -> tick(); onChange.value(map(o.x)); onFinish.value() } }
             .pointerInput(Unit) {
                 detectHorizontalDragGestures(
-                    onDragStart = { o -> dragging = true; onChange.value(map(o.x)) },
-                    onDragEnd = { dragging = false; onFinish.value() },
+                    onDragStart = { o -> dragging = true; tick(); onChange.value(map(o.x)) },
+                    onDragEnd = { dragging = false; tick(); onFinish.value() },
                     onDragCancel = { dragging = false; onFinish.value() }
                 ) { change, _ -> change.consume(); onChange.value(map(change.position.x)) }
             },

@@ -47,7 +47,7 @@ object ArtCache {
     }
     private val misses = HashSet<Long>()
 
-    private fun key(id: Long, px: Int) = id * 2 + if (px > 400) 1 else 0
+    private fun key(id: Long, px: Int) = id * 3 + when { px <= 200 -> 0; px <= 400 -> 1; else -> 2 }
 
     fun get(id: Long, px: Int = 256): Bitmap? = cache.get(key(id, px))
 
@@ -158,4 +158,22 @@ fun Art(song: Song?, size: Dp, corner: Dp, modifier: Modifier = Modifier, px: In
             Icon(Icons.Rounded.MusicNote, null, tint = Color.White.copy(alpha = 0.6f), modifier = Modifier.size(size / 2.2f))
         }
     }
+}
+
+/** Most vivid, reasonably bright colour of the artwork (used to tint the whole UI). Null if the cover is grey. */
+fun vibrantColor(src: Bitmap): Color? {
+    val n = 24
+    val b = Bitmap.createScaledBitmap(src, n, n, true)
+    val px = IntArray(n * n)
+    b.getPixels(px, 0, n, 0, 0, n, n)
+    val hsv = FloatArray(3)
+    var best = -1f; var bh = 0f; var bs = 0f
+    for (p in px) {
+        android.graphics.Color.colorToHSV(p, hsv)
+        if (hsv[1] < 0.35f || hsv[2] < 0.35f) continue
+        val score = hsv[1] * hsv[2]
+        if (score > best) { best = score; bh = hsv[0]; bs = hsv[1] }
+    }
+    if (best < 0f) return null
+    return Color(android.graphics.Color.HSVToColor(floatArrayOf(bh, bs.coerceIn(0.6f, 1f), 0.92f)))
 }

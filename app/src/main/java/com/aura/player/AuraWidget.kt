@@ -7,6 +7,12 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.BitmapShader
+import android.graphics.Canvas
+import android.graphics.Matrix
+import android.graphics.Paint
+import android.graphics.RectF
+import android.graphics.Shader
 import android.view.KeyEvent
 import android.widget.RemoteViews
 
@@ -24,10 +30,23 @@ class AuraWidget : AppWidgetProvider() {
         private fun ids(ctx: Context) =
             AppWidgetManager.getInstance(ctx).getAppWidgetIds(ComponentName(ctx, AuraWidget::class.java))
 
+        /** RemoteViews can't clip an ImageView to rounded corners on every API level, so round the cover itself. */
+        private fun rounded(src: Bitmap): Bitmap {
+            val side = minOf(src.width, src.height)
+            val out = Bitmap.createBitmap(side, side, Bitmap.Config.ARGB_8888)
+            val shader = BitmapShader(src, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).apply {
+                setLocalMatrix(Matrix().apply { postTranslate(-(src.width - side) / 2f, -(src.height - side) / 2f) })
+            }
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { this.shader = shader }
+            val r = side * 0.2f
+            Canvas(out).drawRoundRect(RectF(0f, 0f, side.toFloat(), side.toFloat()), r, r, paint)
+            return out
+        }
+
         fun hasInstances(ctx: Context) = ids(ctx).isNotEmpty()
 
         fun push(ctx: Context, title: String?, artist: String?, playing: Boolean, art: Bitmap?) {
-            val st = State(title, artist, playing, art)
+            val st = State(title, artist, playing, art?.let { rounded(it) })
             last = st
             val ids = ids(ctx)
             if (ids.isEmpty()) return

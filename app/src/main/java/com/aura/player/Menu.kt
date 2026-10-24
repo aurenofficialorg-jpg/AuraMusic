@@ -9,11 +9,13 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -43,19 +45,21 @@ import androidx.compose.ui.unit.sp
 class MenuAction(val label: String, val icon: ImageVector, val selected: Boolean = false, val onClick: () -> Unit)
 
 /**
- * Lightweight in-window action sheet. Unlike DropdownMenu / AlertDialog it does not create a new
+ * Lightweight in-window sheet. Unlike DropdownMenu / AlertDialog it does not create a new
  * Android window, so opening it costs nothing; the whole animation is a single GPU layer
  * (translation + alpha driven by one spring), so it stays at the display's full refresh rate.
+ * [content] receives the foreground and secondary text colours for the sheet's current theme.
  */
 @Composable
-fun AuraMenu(
-    visible: Boolean, onDismiss: () -> Unit, actions: List<MenuAction>,
-    title: String? = null, dark: Boolean = isDarkTheme(), edgeToEdge: Boolean = false
+fun AuraSheet(
+    visible: Boolean, onDismiss: () -> Unit,
+    title: String? = null, dark: Boolean = isDarkTheme(), edgeToEdge: Boolean = false, ime: Boolean = false,
+    content: @Composable ColumnScope.(fg: Color, sub: Color) -> Unit
 ) {
     val p = remember { Animatable(0f) }
-    var lastActions by remember { mutableStateOf(actions) }
+    var lastContent by remember { mutableStateOf(content) }
     var lastTitle by remember { mutableStateOf(title) }
-    if (visible) { lastActions = actions; lastTitle = title }
+    if (visible) { lastContent = content; lastTitle = title }
     LaunchedEffect(visible) { p.animateTo(if (visible) 1f else 0f, spring(dampingRatio = 0.86f, stiffness = 520f)) }
     BackHandler(enabled = visible) { onDismiss() }
     if (!visible && p.value <= 0.002f) return
@@ -63,7 +67,7 @@ fun AuraMenu(
     val card = if (dark) Color(0xFF1E1E21) else Color.White
     val fg = if (dark) Color.White else Color.Black
     val sub = if (dark) Color(0xFF9A9AA0) else Color(0xFF6E6E73)
-    val shape = RoundedCornerShape(28.dp)
+    val shape = RoundedCornerShape(Radius.Sheet)
 
     Box(Modifier.fillMaxSize()) {
         Box(
@@ -79,6 +83,7 @@ fun AuraMenu(
                     alpha = (p.value * 1.6f).coerceIn(0f, 1f)
                 }
                 .then(if (edgeToEdge) Modifier.navigationBarsPadding() else Modifier)
+                .then(if (ime) Modifier.imePadding() else Modifier)
                 .padding(12.dp)
                 .widthIn(max = 480.dp).fillMaxWidth()
                 .clip(shape).background(card).border(1.dp, fg.copy(alpha = 0.08f), shape)
@@ -93,18 +98,28 @@ fun AuraMenu(
                     modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp)
                 )
             } else Spacer(Modifier.height(6.dp))
-            lastActions.forEach { a ->
-                val c = if (a.selected) Accent else fg
-                Row(
-                    Modifier.fillMaxWidth().height(54.dp)
-                        .clickable { a.onClick(); onDismiss() }
-                        .padding(horizontal = 24.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(a.icon, null, tint = if (a.selected) Accent else sub, modifier = Modifier.size(24.dp))
-                    Spacer(Modifier.width(18.dp))
-                    Text(a.label, color = c, fontSize = 16.sp, fontWeight = if (a.selected) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1)
-                }
+            lastContent(fg, sub)
+        }
+    }
+}
+
+@Composable
+fun AuraMenu(
+    visible: Boolean, onDismiss: () -> Unit, actions: List<MenuAction>,
+    title: String? = null, dark: Boolean = isDarkTheme(), edgeToEdge: Boolean = false
+) {
+    AuraSheet(visible, onDismiss, title, dark, edgeToEdge) { fg, sub ->
+        actions.forEach { a ->
+            val c = if (a.selected) Accent else fg
+            Row(
+                Modifier.fillMaxWidth().height(54.dp)
+                    .clickable { a.onClick(); onDismiss() }
+                    .padding(horizontal = 24.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(a.icon, null, tint = if (a.selected) Accent else sub, modifier = Modifier.size(24.dp))
+                Spacer(Modifier.width(18.dp))
+                Text(a.label, color = c, fontSize = 16.sp, fontWeight = if (a.selected) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1)
             }
         }
     }
